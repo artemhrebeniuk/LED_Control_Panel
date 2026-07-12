@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Установочные и рабочие директории
+/data/
+/rendered_scenes/
+/temp_media/
+
+# IDE и конфигурации
+.vscode/
+.idea/
+.agents/
+skills-lock.json
+
+# Виртуальное окружение
+venv/
+env/
+.env
+
+# Тестовые медиафайлы
+*.mp4
+*.jpg
+*.jpeg
+*.png
+*.gif
+!/docs/
