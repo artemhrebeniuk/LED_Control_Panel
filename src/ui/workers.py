@@ -483,3 +483,155 @@ class DeleteMediaWorker(QThread):
                 self.finished.emit(False, f"Не удалось удалить файлы.\nПричина: {', '.join(set(errors))}")
         except Exception as e:
             self.finished.emit(False, f"Ошибка: {e}")
+
+
+import subprocess
+import shutil
+from PyQt6.QtGui import QImage, QPainter, QColor, QBrush
+from PyQt6.QtCore import Qt
+
+class PingPongWorker(QThread):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, client):
+        super().__init__()
+        self.client = client
+        self._is_aborted = False
+
+    def run(self) -> None:
+        try:
+            self.progress.emit(5)
+            from src.core.config import screen_config
+            width = screen_config.total_width
+            height = screen_config.total_height
+            
+            # Генерация кадров
+            temp_dir = os.path.join("temp_media", "ping_pong_frames")
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Очистка старых кадров
+            for f in os.listdir(temp_dir):
+                os.remove(os.path.join(temp_dir, f))
+                
+            self.progress.emit(10)
+            
+            fps = 30
+            duration = 30  # 30 секунд для ожидания удара в угол
+            frames = fps * duration
+            
+            r = min(width, height) * 0.08
+            if r < 2: r = 2
+            
+            # Идеальный цикл для DVD-отскока (ровно в угол)
+            r_log = r * 0.2
+            A_x = width - 2 * r_log
+            A_y = height - 2 * r_log
+            
+            cycles_x = 7
+            cycles_y = 11
+            
+            img = QImage(width, height, QImage.Format.Format_RGB32)
+            
+            for i in range(frames):
+                if self._is_aborted: return
+                
+                # Сдвиг на 1 кадр, чтобы удар в угол был ровно на последнем кадре видео
+                t = (i + 1) / frames
+                
+                dist_x = t * (cycles_x * 2 * A_x)
+                dist_y = t * (cycles_y * 2 * A_y)
+                
+                pos_x = dist_x % (2 * A_x)
+                x = r_log + pos_x if pos_x < A_x else r_log + 2 * A_x - pos_x
+                
+                pos_y = dist_y % (2 * A_y)
+                y = r_log + pos_y if pos_y < A_y else r_log + 2 * A_y - pos_y
+                
+                # Эффект резинового вжатия
+                factor_x = 1.0
+                if x < r:
+                    factor_x = 0.5 + 0.5 * (x - r_log) / (r - r_log)
+                elif x > width - r:
+                    factor_x = 0.5 + 0.5 * ((width - x) - r_log) / (r - r_log)
+
+                factor_y = 1.0
+                if y < r:
+                    factor_y = 0.5 + 0.5 * (y - r_log) / (r - r_log)
+                elif y > height - r:
+                    factor_y = 0.5 + 0.5 * ((height - y) - r_log) / (r - r_log)
+
+                expand_x = 1.0 + (1.0 - factor_y)
+                expand_y = 1.0 + (1.0 - factor_x)
+
+                draw_w = 2 * r * factor_x * expand_x
+                draw_h = 2 * r * factor_y * expand_y
+
+                cx = x
+                if cx - draw_w / 2 < 0: cx = draw_w / 2
+                elif cx + draw_w / 2 > width: cx = width - draw_w / 2
+                
+                cy = y
+                if cy - draw_h / 2 < 0: cy = draw_h / 2
+                elif cy + draw_h / 2 > height: cy = height - draw_h / 2
+                
+                img.fill(QColor("black"))
+                painter = QPainter(img)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setBrush(QBrush(QColor("white")))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(int(cx - draw_w / 2), int(cy - draw_h / 2), int(draw_w), int(draw_h))
+                painter.end()
+                
+                img.save(os.path.join(temp_dir, f"frame_{i:04d}.png"))
+                
+                if i % 30 == 0:
+                    self.progress.emit(10 + int((i / frames) * 40)) # 10 to 50%
+            
+            self.progress.emit(50)
+            
+            out_file = os.path.join("temp_media", "ping_pong.mp4")
+            if os.path.exists(out_file):
+                os.remove(out_file)
+                
+            self.progress.emit(60)
+            
+            # Сборка видео через FFmpeg
+            ffmpeg_path = os.environ.get("FFMPEG_PATH", "ffmpeg")
+            cmd = [
+                ffmpeg_path, "-y",
+                "-framerate", str(fps),
+                "-i", os.path.join(temp_dir, "frame_%04d.png"),
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                "-crf", "18",
+                out_file
+            ]
+            
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            self.progress.emit(80)
+            
+            if self._is_aborted: return
+            
+            # Отправка на плеер
+            def upload_prog(pct):
+                self.progress.emit(80 + int(pct * 0.2)) # 80 to 100%
+                
+            md5_len = self.client.upload_media(out_file, progress_callback=upload_prog)
+            media_item = {
+                "md5AndLength": md5_len,
+                "duration": 0,
+                "anim": "NONE"
+            }
+            res = self.client.upload_third_program([media_item], "Ping Pong")
+            
+            if res.get("code") == 200:
+                self.finished.emit(True, "Пинг-Понг запущен!")
+            else:
+                self.finished.emit(False, f"Ошибка: {res.get('message', '')}")
+                
+        except Exception as e:
+            self.finished.emit(False, str(e))
+            
+    def abort(self):
+        self._is_aborted = True

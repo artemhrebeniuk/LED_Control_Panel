@@ -1,3 +1,6 @@
+"""
+Менеджер плейлистов, сохраняющий конфигурацию в JSON.
+"""
 import json
 import os
 from pathlib import Path

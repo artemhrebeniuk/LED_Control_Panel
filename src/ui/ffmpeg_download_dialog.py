@@ -1,3 +1,6 @@
+"""
+Диалоговое окно для скачивания FFmpeg.
+"""
 import os
 import zipfile
 import tempfile

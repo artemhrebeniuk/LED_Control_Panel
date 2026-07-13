@@ -1,3 +1,6 @@
+"""
+Управление загрузкой и поиском видеодвижка FFmpeg.
+"""
 import os
 import shutil
 from pathlib import Path

@@ -637,6 +637,55 @@ class MainWindow(QMainWindow):
         
         scroll_layout.addWidget(group_opt)
         
+        # Группа 3: Развлечения / Скринсейверы
+        group_fun = QGroupBox("Развлечения / Скринсейверы")
+        layout_fun = QVBoxLayout(group_fun)
+        layout_fun.setContentsMargins(16, 20, 16, 16)
+        
+        btn_ping_pong = QPushButton("🏓 Запустить заставку Пинг-Понг")
+        btn_ping_pong.setObjectName("btn_secondary")
+        btn_ping_pong.setMinimumHeight(32)
+        
+        ping_pong_progress = QProgressBar()
+        ping_pong_progress.setTextVisible(False)
+        ping_pong_progress.setFixedHeight(4)
+        ping_pong_progress.setVisible(False)
+        
+        def _run_ping_pong():
+            btn_ping_pong.setEnabled(False)
+            btn_ping_pong.setText("Генерация кадров...")
+            ping_pong_progress.setVisible(True)
+            ping_pong_progress.setValue(0)
+            
+            from src.ui.workers import PingPongWorker
+            self.ping_pong_worker = PingPongWorker(self.client)
+            
+            def _on_prog(p):
+                ping_pong_progress.setValue(p)
+                if p > 50: btn_ping_pong.setText("Сборка видео (FFmpeg)...")
+                if p > 80: btn_ping_pong.setText("Отправка на LED-экран...")
+                
+            def _on_finish(success, msg):
+                btn_ping_pong.setEnabled(True)
+                btn_ping_pong.setText("🏓 Запустить заставку Пинг-Понг")
+                ping_pong_progress.setVisible(False)
+                if success:
+                    self.log("Пинг-Понг успешно запущен на экране!")
+                else:
+                    self.log(f"Ошибка Пинг-Понг: {msg}")
+                    QMessageBox.warning(dialog, "Ошибка", msg)
+            
+            self.ping_pong_worker.progress.connect(_on_prog)
+            self.ping_pong_worker.finished.connect(_on_finish)
+            self.ping_pong_worker.start()
+            
+        btn_ping_pong.clicked.connect(_run_ping_pong)
+        
+        layout_fun.addWidget(btn_ping_pong)
+        layout_fun.addWidget(ping_pong_progress)
+        
+        scroll_layout.addWidget(group_fun)
+        
         scroll_area.setWidget(scroll_widget)
         main_layout.addWidget(scroll_area)
 

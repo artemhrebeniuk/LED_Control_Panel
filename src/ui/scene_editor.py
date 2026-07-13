@@ -1,3 +1,6 @@
+"""
+Редактор сцен для настройки мультиоконного режима.
+"""
 import os
 from pathlib import Path
 from PyQt6.QtWidgets import (

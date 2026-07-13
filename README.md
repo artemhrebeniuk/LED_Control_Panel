@@ -1,96 +1,89 @@
-# 🌟 LED Screen Manager (Beijing Kystar KD6)
+# Beijing Kystar KD6 LED Control Interface
 
-![LED Manager](https://img.shields.io/badge/PyQt6-UI%20Framework-blue?style=for-the-badge&logo=qt)
-![FFmpeg](https://img.shields.io/badge/FFmpeg-Video%20Processing-green?style=for-the-badge&logo=ffmpeg)
-![Python 3.13](https://img.shields.io/badge/Python-3.13-yellow?style=for-the-badge&logo=python)
+[![PyQt6](https://img.shields.io/badge/UI-PyQt6-blue.svg?style=flat-square&logo=qt)](https://www.qt.io/)
+[![FFmpeg](https://img.shields.io/badge/Video_Engine-FFmpeg-green.svg?style=flat-square&logo=ffmpeg)](https://ffmpeg.org/)
+[![Python](https://img.shields.io/badge/Language-Python_3.13-yellow.svg?style=flat-square&logo=python)](https://www.python.org/)
+[![Network](https://img.shields.io/badge/Protocol-HTTP_LAN-orange.svg?style=flat-square)](#)
 
-Современное десктопное приложение для управления модульными светодиодными экранами. Позволяет создавать сложные мультимедийные сцены из видео, картинок и GIF-анимаций, автоматически объединяя их с помощью FFmpeg, и транслировать результат на устройство **Beijing Kystar KD6** через локальную сеть (LAN).
-
----
-
-## ✨ Ключевые возможности
-
-- 🎨 **Визуальный редактор сцен:** Интерактивная сетка с поддержкой Drag-and-Drop. Вы можете разделять и объединять экраны в любые зоны.
-- 🎬 **Умный рендер (FFmpeg):** Автоматическая нормализация FPS, правильная обработка GIF и видео, защита от обрезки потоков (eof_action=pass).
-- ⚡ **Асинхронное взаимодействие:** Все тяжелые задачи (отправка файлов, рендер, проверка сети) вынесены в отдельные потоки (\QThread\), UI никогда не зависает.
-- 📁 **Медиабиблиотека и Плейлисты:** Локальное сохранение программ (плейлистов) в \data/playlists.json\.
-- ⚙️ **Полная модульность:** Готовность к расширению физического размера экрана путем изменения двух констант в конфиге.
+A high-performance, multithreaded LAN control system for managing modular LED display panels driven by the **Beijing Kystar KD6** media player.
 
 ---
 
-## 🛠 Архитектура и Структура Проекта
+## 📐 System Topology Diagram
 
-Проект разделен на UI (пользовательский интерфейс) и Core (бизнес-логика).
-
-\\	ext
-📁 LED/
-├── 📁 data/                           # Пользовательские данные и конфиги
-│   ├── hardware_config.json           # Физические параметры LED-панелей
-│   └── playlists.json                 # Сохраненные плейлисты пользователя
-├── 📁 docs/                           # Оригинальная документация производителя
-│   ├── LAN_secondary_development.md   # Документация API устройства
-│   └── Technical_documentation.md     # Описание железа и подключения
-├── 📁 src/
-│   ├── 📁 core/                       # Бизнес-логика
-│   │   ├── config.py                  # Глобальные константы и пути
-│   │   ├── ffmpeg_renderer.py         # Сборка сцен через FFmpeg
-│   │   ├── kystar_client.py           # HTTP-клиент для API (порт 18080)
-│   │   ├── media_utils.py             # ffprobe/ffmpeg утилиты (FPS, превью)
-│   │   └── playlists_manager.py       # Логика сохранения JSON-плейлистов
-│   └── 📁 ui/                         # Интерфейс (PyQt6)
-│       ├── main_window.py             # Главное окно приложения
-│       ├── scene_editor.py            # Интерактивная сетка экранов
-│       ├── styles.py                  # CSS/QSS стили интерфейса
-│       └── workers.py                 # Асинхронные потоки (QThread)
-└── main.py                            # Точка входа в приложение
+\+------------------+         HTTP API (Port 18080)         +--------------------+
+|  Control PC      | ====================================> | Beijing Kystar KD6 |
+|  (PyQt6 App)     |                                       | (Media Player)     |
++------------------+                                       +--------------------+
+                                                                     ||
+                                                                     || LED OUT 1
+                                                                     \/
++------------------+          HUB75 Ribbon Cable           +--------------------+
+|   LED Matrix     | <==================================== |    Kystar G616     |
+|   (2x2 Panels)   |                                       |  (Receiving Card)  |
++------------------+                                       +--------------------+
 \
 ---
 
-## 🚀 Будущее развитие (Для будущих AI и Разработчиков)
+## ⚙️ Technical Specifications
 
-### 1. Расширение физического экрана
-Текущая конфигурация состоит из сетки **2x2 панелей** (каждая панель 80x40 пикселей). 
-При добавлении новых панелей вам **НЕ НУЖНО** переписывать логику рендера. Просто измените:
-- \SCREEN_COLS\ (количество панелей по горизонтали)
-- \SCREEN_ROWS\ (количество панелей по вертикали)
-... в файле \src/core/config.py\. Приложение автоматически перерисует интерфейс, а FFmpeg подстроит масштабирование.
-
-### 2. Интеграция новых функций API Kystar
-Плеер поддерживает продвинутые функции (см. документацию в \docs/LAN_secondary_development.md\), которые можно легко внедрить в проект:
-- Расписание показов (Scheduled Playback).
-- Чтение датчиков (яркость, температура GPU/CPU).
-- Облачное управление.
+| Parameter | Configuration Specification | Implementation Detail |
+| :--- | :--- | :--- |
+| **Media Controller** | Beijing Kystar KD6 | Android Controller, 6x LED OUT Ports |
+| **Receiving Card** | Kystar G616 | HUB75 Interface Board, 16x Ports |
+| **Grid Dimensions** | 2 × 2 Panels (Fully Scalable) | Adjustable via src/core/config.py |
+| **Panel Resolution** | 80 × 40 Pixels | Standard P4 Module |
+| **Total Canvas Size** | 160 × 80 Pixels | Dynamic canvas bounds |
+| **Target Frame Rate** | 30 FPS | Hardware ceiling constraint |
+| **Control Link** | HTTP via LAN (APIPA) | IP: 169.254.250.250 (Port 18080) |
 
 ---
 
-## ⚠️ Подводные камни и Решения (ОЧЕНЬ ВАЖНО)
+## 🛠 Directory Structure & Architectural Layout
 
-В процессе разработки мы столкнулись с рядом неочевидных проблем. Если вы собираетесь модифицировать код, обязательно прочтите это:
-
-1. **Призрачные виджеты в PyQt6 (\scene_editor.py\)**
-   > При удалении \CellWidget\ из сетки через emoveCellWidget()\, виджет НЕ удаляется из памяти и остается «висеть» поверх таблицы. **Обязательно** вызывайте \widget.deleteLater()\ перед удалением привязки.
-
-2. **Невидимые символы в путях файлов (\scene_editor.py\)**
-   > При Drag-and-Drop в Windows, пути к файлам могут содержать символы переноса строки (\
-\n\) в самом конце. Если не сделать \.strip()\, проверки вроде \os.path.exists()\ будут выдавать \False\.
-
-3. **Обрезка видео в FFmpeg (\fmpeg_renderer.py\)**
-   > Если смешивать статические картинки и видео в одной сцене, стандартный подход с \shortest=1\ приведет к тому, что видео оборвется на 1 кадре (так как картинка 'заканчивается' сразу). Мы используем **\eof_action=pass\** в фильтре overlay — это заставляет короткие видео/GIF замирать на последнем кадре, позволяя самому длинному видео доиграть до конца.
-
-4. **Рассинхронизация времени в FFmpeg**
-   > Видео с разным FPS при наложении начинают рассинхронизироваться. Мы решаем это нормализацией ВСЕХ входных потоков через \ps={target_fps}\ и сбросом временных меток через \setpts=PTS-STARTPTS\.
-
-5. **Ограничение FPS на LED-экране**
-   > Аппаратный декодер KD6 не справляется с кастомными 60 FPS композициями. Мы принудительно ограничиваем выходной файл до **30 FPS** (\_MAX_OUTPUT_FPS\).
-
-6. **Синхронизация файлов (MD5 + Size)**
-   > Загрузка медиа на плеер (kystar_client.py) требует вычисления MD5-хэша и размера файла (md5-size). Если такой файл уже есть на плеере (проверка checkUpload), повторная загрузка отменяется для экономии времени. Плеер использует этот строковый идентификатор, а не исходное имя файла. Не пытайтесь загружать файлы простыми POST-запросами без этого протокола.
-
-7. **Отсутствие HDMI-трансляции**
-   > Приложение взаимодействует с плеером исключительно по локальной сети через LAN API (порт 18080). Вся логика аппаратной трансляции через HDMI-кабель была намеренно вырезана из проекта по требованиям, чтобы не перегружать интерфейс. Не пытайтесь возвращать HdmiTab или переключатели источника (source mode).
-
+\.
+├── data/                          # Persistent Configurations
+│   ├── hardware_config.json       # Physical grid dimensions
+│   └── playlists.json             # Stored playlist databases
+├── docs/                          # Original SDK Reference Material
+│   ├── LAN_secondary_development.md
+│   └── Technical_documentation.md
+├── src/                           # Codebase Root
+│   ├── core/                      # Business & Control Subsystems
+│   │   ├── config.py              # Configuration Singleton
+│   │   ├── ffmpeg_renderer.py     # Multi-window Canvas Renderer
+│   │   ├── kystar_client.py       # API Client Wrapper
+│   │   ├── media_utils.py         # File Probe & Validation
+│   │   └── playlists_manager.py   # Playlist Persistence Layer
+│   └── ui/                        # PyQt6 Interface Layer
+│       ├── main_window.py         # Primary GUI
+│       ├── scene_editor.py        # Grid / Window Editor
+│       ├── styles.py              # UI/UX Stylesheets
+│       └── workers.py             # Asynchronous Threads
+└── main.py                        # Execution Entry Point
+\
 ---
 
+## 🖥 Core Architectural Modules
+
+### 1. Asynchronous Multithreading
+To ensure the GUI thread remains responsive during intensive network operations and file rendering, all core operations are delegated to dedicated QThread workers:
+* **Network Heartbeat**: Periodically pings the Kystar KD6 device and fetches hardware statistics.
+* **Canvas Renderer**: Dispatches FFmpeg compilation tasks asynchronously.
+* **Network Ingestion**: Performs binary file transfers to the media controller without blocking UI draw frames.
+
+### 2. Video Compositing Engine (FFmpeg)
+The system leverages FFmpeg for dynamic layout composition. 
+* **FPS Constraints**: Rigidly capped at 30 FPS (_MAX_OUTPUT_FPS in src/core/ffmpeg_renderer.py) to prevent hardware decoder overload on the KD6.
+* **Sub-stream Alignment**: Inputs are scaled, padded, and layered via a complex filtergraph, with timestamps normalized using setpts=PTS-STARTPTS and frame rates force-aligned using ps.
+* **Static Assets**: For layouts combining static images and video clips, the renderer uses the eof_action=pass parameter in overlay filters. This prevents the output sequence from terminating early when a short video ends.
+
+### 3. API Communication Bridge
+The network interface communicates with the Kystar KD6 over HTTP:
+* **Identification Protocol**: Before uploading files, the client calculates a custom unique payload identifier: MD5 checksum + File Size. This allows the Kystar hardware to skip redundant uploads.
+* **Dynamic Geometry**: Grid geometries are calculated dynamically. The frontend layout is constructed dynamically based on the current parameters of the screen configuration class.
+
+---
 
 ## 📚 Документация от Производителя
 
@@ -202,132 +195,132 @@ LAN control interface design
 document
 
 ## Contents
-I.  Revisions .....................................................................................................................................5
--  Purpose of writing ....................................................................................................................5
-3 . Establish connections ..............................................................................................................5
-4 . Return to code description ....................................................................................................6
-5 . Interface description ................................................................................................................7
-5.1  Obtain device details ......................................................................................................7
-5.2  Get the current time/time zone ...................................................................................8
-5.3  Get Screen shots ..............................................................................................................9
-5.4  Sync time Information (Sync local time to playback card) ................................. 10
-5.5  Restart the Playcard ..................................................................................................... 10
-5.6  Rename the player card name .................................................................................. 11
+I.  Revisions  5
+-  Purpose of writing  5
+3 . Establish connections  5
+4 . Return to code description  6
+5 . Interface description  7
+5.1  Obtain device details  7
+5.2  Get the current time/time zone  8
+5.3  Get Screen shots  9
+5.4  Sync time Information (Sync local time to playback card)   10
+5.5  Restart the Playcard   10
+5.6  Rename the player card name   11
 5.7  Get the status of the Player card (Brightness/Volume/Screen switch status) 12
-5.8  Brightness Settings ....................................................................................................... 13
-5.9  Setting the automatic brightness adjustment switch........................................... 13
-5.10  Obtaining the status of the Automatic brightness adjustment switch ............ 14
-5.11  Volume Settings ............................................................................................................ 14
-5.12  Player card screen on/off ............................................................................................ 15
-5.13  Time Zone Settings ...................................................................................................... 16
-5.14  Set the network time.................................................................................................... 16
-5.15  Get the playback status of the player card ............................................................. 17
-5.16  Obtain the running time of the Playcard ................................................................ 17
-5.17  Obtain the output resolution of the Playcard ........................................................ 18
-5.18  Obtain the ip/mac address /sn code of the playcard .......................................... 18
-5.19  Obtain the ram and CPU usage of the player card .............................................. 19
-5.20  Obtain the status of the playback card relay ......................................................... 20
-The playback card displays content related (program playback) .................................................. 20
-5.21  Quick program upload ................................................................................................ 20
-5.22  Font file upload ............................................................................................................. 23
-5.23  Get the list of font files in the playcard ................................................................... 23
-5.24  Get the list of programs in the Playcard ................................................................. 24
-5.25  Switching Between Common Programs ................................................................. 27
-5.26  Emergency Format switching (Quick switching by program name) ................ 27
-5.27  Emergency Text play .................................................................................................... 28
-5.28  Cancel the emergency format and emergency text playback ........................... 29
-5.29  Change the Playcard control traffic nixie ................................................................ 29
-5.30  The Playcard displays text content directly ............................................................ 30
-5.31  Playcard directly displays web content ................................................................... 31
-5.32  Change the content displayed in the Playcard window ...................................... 31
-5.33  Create or modify the window list .............................................................................. 33
-5.34  Get the current window of the player card ............................................................ 34
-5.35  Delete the player card specified window ................................................................ 35
-5.36  Deleting the specified material.................................................................................. 36
+5.8  Brightness Settings   13
+5.9  Setting the automatic brightness adjustment switch  13
+5.10  Obtaining the status of the Automatic brightness adjustment switch   14
+5.11  Volume Settings   14
+5.12  Player card screen on/off   15
+5.13  Time Zone Settings   16
+5.14  Set the network time  16
+5.15  Get the playback status of the player card   17
+5.16  Obtain the running time of the Playcard   17
+5.17  Obtain the output resolution of the Playcard   18
+5.18  Obtain the ip/mac address /sn code of the playcard   18
+5.19  Obtain the ram and CPU usage of the player card   19
+5.20  Obtain the status of the playback card relay   20
+The playback card displays content related (program playback)   20
+5.21  Quick program upload   20
+5.22  Font file upload   23
+5.23  Get the list of font files in the playcard   23
+5.24  Get the list of programs in the Playcard   24
+5.25  Switching Between Common Programs   27
+5.26  Emergency Format switching (Quick switching by program name)   27
+5.27  Emergency Text play   28
+5.28  Cancel the emergency format and emergency text playback   29
+5.29  Change the Playcard control traffic nixie   29
+5.30  The Playcard displays text content directly   30
+5.31  Playcard directly displays web content   31
+5.32  Change the content displayed in the Playcard window   31
+5.33  Create or modify the window list   33
+5.34  Get the current window of the player card   34
+5.35  Delete the player card specified window   35
+5.36  Deleting the specified material  36
 
-Advanced publishing (recurring show lists, timed shows, timed instructions, etc.) .................. 37
-5.37  Recurring program list publishing ............................................................................ 37
-5.38  Get the list of recurring shows .................................................................................. 38
-5.39  Switch the recurring program list to play ............................................................... 38
-5.40  Scheduled program playback and release ............................................................. 39
-5.41  Get schedule program details ................................................................................... 41
-5.42  Set the timing of the shims program ....................................................................... 42
-5.43  Get the Playcard Gasket program ............................................................................ 43
-5.44  Set the timer play switch ............................................................................................. 44
-5.45  Obtaining the status of the Scheduled play switch .............................................. 44
-5.46  Timing instruction release .......................................................................................... 45
-5.47  Get the list of timing instructions.............................................................................. 46
-5.48  Set timing instruction switch ...................................................................................... 47
-5.49  Get timing command switch status .......................................................................... 47
-Player card network related (cable network, WiFi, 4G/5G) ............................................................. 48
-5.50  Get the type of network the playcard is currently connected to ...................... 48
-5.51  Obtain the current ip and DHCP status .................................................................. 49
-5.52  Set the wired network to DHCP ................................................................................ 50
-5.53  Set Wired network to fixed ip .................................................................................... 50
-5.54  Turn Hotspot on/off ..................................................................................................... 51
-5.55  Setting the Hotspot Name, Password, and Channel ............................................ 51
-5.56  Get the hotspot name, Password, Channel ............................................................ 52
-5.57  Turn wifi sta on/off ....................................................................................................... 52
-5.58  Get the external wifi found by the Playcard ........................................................... 53
-5.59  Connect the Playcard to external wifi ...................................................................... 53
-5.60  Get wifi sta status .......................................................................................................... 54
-5.61  Get 4G/5G status .......................................................................................................... 54
-5.62  Testing how long it takes the player card to access the network ..................... 55
-Configure the player card ....................................................................................................................... 56
-5.63  Setting the Playback card screen rotation .............................................................. 56
-5.64  Set the Playback card relay switch............................................................................ 56
-5.65  Get the onboard relay Remarks name .................................................................... 57
-5.66  Setting the onboard relay Remarks Name ............................................................. 58
-5.67  Get the relay Note name of the multi-function card........................................... 58
-5.68  Set the multi-function card relay note name ........................................................ 59
-5.69  Get the sensor value .................................................................................................... 59
-5.70  Obtaining the Player Card Language ...................................................................... 60
-5.71  Setting the Playcard language................................................................................... 61
-5.72  Set the input source HDMI resolution ..................................................................... 62
-5.73  Get the input source HDMI resolution .................................................................... 62
-5.74  Setting the Playback Card Output Crop Area (Local display) ............................ 63
-5.75  Get the value of the playback card Output Crop area ........................................ 64
-5.76  Setting the Playback card Output Image Scaling (image parameters) ........... 65
-5.77  Get the playback card Output image scaling value ............................................. 65
+Advanced publishing (recurring show lists, timed shows, timed instructions, etc.)   37
+5.37  Recurring program list publishing   37
+5.38  Get the list of recurring shows   38
+5.39  Switch the recurring program list to play   38
+5.40  Scheduled program playback and release   39
+5.41  Get schedule program details   41
+5.42  Set the timing of the shims program   42
+5.43  Get the Playcard Gasket program   43
+5.44  Set the timer play switch   44
+5.45  Obtaining the status of the Scheduled play switch   44
+5.46  Timing instruction release   45
+5.47  Get the list of timing instructions  46
+5.48  Set timing instruction switch   47
+5.49  Get timing command switch status   47
+Player card network related (cable network, WiFi, 4G/5G)   48
+5.50  Get the type of network the playcard is currently connected to   48
+5.51  Obtain the current ip and DHCP status   49
+5.52  Set the wired network to DHCP   50
+5.53  Set Wired network to fixed ip   50
+5.54  Turn Hotspot on/off   51
+5.55  Setting the Hotspot Name, Password, and Channel   51
+5.56  Get the hotspot name, Password, Channel   52
+5.57  Turn wifi sta on/off   52
+5.58  Get the external wifi found by the Playcard   53
+5.59  Connect the Playcard to external wifi   53
+5.60  Get wifi sta status   54
+5.61  Get 4G/5G status   54
+5.62  Testing how long it takes the player card to access the network   55
+Configure the player card   56
+5.63  Setting the Playback card screen rotation   56
+5.64  Set the Playback card relay switch  56
+5.65  Get the onboard relay Remarks name   57
+5.66  Setting the onboard relay Remarks Name   58
+5.67  Get the relay Note name of the multi-function card  58
+5.68  Set the multi-function card relay note name   59
+5.69  Get the sensor value   59
+5.70  Obtaining the Player Card Language   60
+5.71  Setting the Playcard language  61
+5.72  Set the input source HDMI resolution   62
+5.73  Get the input source HDMI resolution   62
+5.74  Setting the Playback Card Output Crop Area (Local display)   63
+5.75  Get the value of the playback card Output Crop area   64
+5.76  Setting the Playback card Output Image Scaling (image parameters)   65
+5.77  Get the playback card Output image scaling value   65
 
-5.78  Set the player card to restart at a scheduled time ............................................... 66
-5.79  Obtaining the Player card Timed restart status..................................................... 67
-5.80  Delete unused resources from the player card ..................................................... 67
-5.81  Restore factory Settings .............................................................................................. 68
-5.82  Restoring the system to factory Settings ................................................................ 68
-5.83  Player software version rollback................................................................................ 69
-5.84  Get the current signal source mode ........................................................................ 69
-5.85  Getting the Status of the Player card (Device running status) .......................... 70
-5.86  Enabling/Disabling Cloud Platform Connection ................................................... 70
-5.87  Setting the Cloud Platform address ......................................................................... 71
-5.88  Obtaining the status of the Cloud Platform ........................................................... 71
-5.89  Obtaining the Cloud Platform Disconnection Detection status ........................ 72
-5.90  Enabling Cloud Platform Disconnection Detection .............................................. 72
-5.91  Obtaining the Cloud Platform Disconnection Detection time........................... 73
-5.92  Enabling Cloud Platform Disconnection Detection .............................................. 73
-5.93  Setting the Sync Playback Function ......................................................................... 74
-5.94  Get the Sync playback status ..................................................................................... 74
-5.95  Set whether to display the program name when switching programs ........... 75
-5.96  Get whether to display the program name when switching programs .......... 75
-5.97  Get Playcard logs .......................................................................................................... 76
-5.98  Add the Playcard lock password ............................................................................... 76
-5.99  Get the Player card lock status .................................................................................. 77
-5.100  Lock the player card ..................................................................................................... 78
-5.101  Unlock the Login Playcard .......................................................................................... 78
-5.102  Forgot the Password .................................................................................................... 78
-5.103  Get the send card/receive card information .......................................................... 79
-5.104  File screen adjustment ................................................................................................. 80
-5.105  Setting the Network port size of the Player card.................................................. 81
-5.106  USB flash drive broadcast Settings ........................................................................... 82
-5.107  Get USB flash Drive Live Settings .............................................................................. 83
-5.108  Set NTP server address ............................................................................................... 84
-5.109  Obtaining the NTP server address ........................................................................... 85
-5.110  Installing third-party apps .......................................................................................... 85
-5.111  Uninstalling Third-Party Apps ................................................................................... 86
-5.112  Get the Latitude and longitude of the player card ............................................... 86
-5.113  Text-to-speech broadcast.......................................................................................... 87
-5.114  Stopping Voice broadcast .......................................................................................... 87
-Addendum ......................................................................................................................................... 89
+5.78  Set the player card to restart at a scheduled time   66
+5.79  Obtaining the Player card Timed restart status  67
+5.80  Delete unused resources from the player card   67
+5.81  Restore factory Settings   68
+5.82  Restoring the system to factory Settings   68
+5.83  Player software version rollback  69
+5.84  Get the current signal source mode   69
+5.85  Getting the Status of the Player card (Device running status)   70
+5.86  Enabling/Disabling Cloud Platform Connection   70
+5.87  Setting the Cloud Platform address   71
+5.88  Obtaining the status of the Cloud Platform   71
+5.89  Obtaining the Cloud Platform Disconnection Detection status   72
+5.90  Enabling Cloud Platform Disconnection Detection   72
+5.91  Obtaining the Cloud Platform Disconnection Detection time  73
+5.92  Enabling Cloud Platform Disconnection Detection   73
+5.93  Setting the Sync Playback Function   74
+5.94  Get the Sync playback status   74
+5.95  Set whether to display the program name when switching programs   75
+5.96  Get whether to display the program name when switching programs   75
+5.97  Get Playcard logs   76
+5.98  Add the Playcard lock password   76
+5.99  Get the Player card lock status   77
+5.100  Lock the player card   78
+5.101  Unlock the Login Playcard   78
+5.102  Forgot the Password   78
+5.103  Get the send card/receive card information   79
+5.104  File screen adjustment   80
+5.105  Setting the Network port size of the Player card  81
+5.106  USB flash drive broadcast Settings   82
+5.107  Get USB flash Drive Live Settings   83
+5.108  Set NTP server address   84
+5.109  Obtaining the NTP server address   85
+5.110  Installing third-party apps   85
+5.111  Uninstalling Third-Party Apps   86
+5.112  Get the Latitude and longitude of the player card   86
+5.113  Text-to-speech broadcast  87
+5.114  Stopping Voice broadcast   87
+Addendum   89
 
 
 
