@@ -11,7 +11,8 @@ A high-performance, multithreaded LAN control system for managing modular LED di
 
 ## 📐 System Topology Diagram
 
-\+------------------+         HTTP API (Port 18080)         +--------------------+
+```text
++------------------+         HTTP API (Port 18080)         +--------------------+
 |  Control PC      | ====================================> | Beijing Kystar KD6 |
 |  (PyQt6 App)     |                                       | (Media Player)     |
 +------------------+                                       +--------------------+
@@ -22,7 +23,8 @@ A high-performance, multithreaded LAN control system for managing modular LED di
 |   LED Matrix     | <==================================== |    Kystar G616     |
 |   (2x2 Panels)   |                                       |  (Receiving Card)  |
 +------------------+                                       +--------------------+
-\
+```
+
 ---
 
 ## ⚙️ Technical Specifications
@@ -31,17 +33,18 @@ A high-performance, multithreaded LAN control system for managing modular LED di
 | :--- | :--- | :--- |
 | **Media Controller** | Beijing Kystar KD6 | Android Controller, 6x LED OUT Ports |
 | **Receiving Card** | Kystar G616 | HUB75 Interface Board, 16x Ports |
-| **Grid Dimensions** | 2 × 2 Panels (Fully Scalable) | Adjustable via src/core/config.py |
+| **Grid Dimensions** | 2 × 2 Panels (Fully Scalable) | Adjustable via `src/core/config.py` |
 | **Panel Resolution** | 80 × 40 Pixels | Standard P4 Module |
 | **Total Canvas Size** | 160 × 80 Pixels | Dynamic canvas bounds |
 | **Target Frame Rate** | 30 FPS | Hardware ceiling constraint |
-| **Control Link** | HTTP via LAN (APIPA) | IP: 169.254.250.250 (Port 18080) |
+| **Control Link** | HTTP via LAN (APIPA) | IP: `169.254.250.250` (Port 18080) |
 
 ---
 
-## 🛠 Directory Structure & Architectural Layout
+## 📁 Directory Structure & Architectural Layout
 
-\.
+```text
+.
 ├── data/                          # Persistent Configurations
 │   ├── hardware_config.json       # Physical grid dimensions
 │   └── playlists.json             # Stored playlist databases
@@ -61,22 +64,23 @@ A high-performance, multithreaded LAN control system for managing modular LED di
 │       ├── styles.py              # UI/UX Stylesheets
 │       └── workers.py             # Asynchronous Threads
 └── main.py                        # Execution Entry Point
-\
+```
+
 ---
 
 ## 🖥 Core Architectural Modules
 
 ### 1. Asynchronous Multithreading
-To ensure the GUI thread remains responsive during intensive network operations and file rendering, all core operations are delegated to dedicated QThread workers:
+To ensure the GUI thread remains responsive during intensive network operations and file rendering, all core operations are delegated to dedicated `QThread` workers:
 * **Network Heartbeat**: Periodically pings the Kystar KD6 device and fetches hardware statistics.
 * **Canvas Renderer**: Dispatches FFmpeg compilation tasks asynchronously.
 * **Network Ingestion**: Performs binary file transfers to the media controller without blocking UI draw frames.
 
 ### 2. Video Compositing Engine (FFmpeg)
 The system leverages FFmpeg for dynamic layout composition. 
-* **FPS Constraints**: Rigidly capped at 30 FPS (_MAX_OUTPUT_FPS in src/core/ffmpeg_renderer.py) to prevent hardware decoder overload on the KD6.
-* **Sub-stream Alignment**: Inputs are scaled, padded, and layered via a complex filtergraph, with timestamps normalized using setpts=PTS-STARTPTS and frame rates force-aligned using ps.
-* **Static Assets**: For layouts combining static images and video clips, the renderer uses the eof_action=pass parameter in overlay filters. This prevents the output sequence from terminating early when a short video ends.
+* **FPS Constraints**: Rigidly capped at 30 FPS (`_MAX_OUTPUT_FPS` in `src/core/ffmpeg_renderer.py`) to prevent hardware decoder overload on the KD6.
+* **Sub-stream Alignment**: Inputs are scaled, padded, and layered via a complex filtergraph, with timestamps normalized using `setpts=PTS-STARTPTS` and frame rates force-aligned using `fps`.
+* **Static Assets**: For layouts combining static images and video clips, the renderer uses the `eof_action=pass` parameter in overlay filters. This prevents the output sequence from terminating early when a short video ends.
 
 ### 3. API Communication Bridge
 The network interface communicates with the Kystar KD6 over HTTP:
@@ -85,12 +89,12 @@ The network interface communicates with the Kystar KD6 over HTTP:
 
 ---
 
-## 📚 Документация от Производителя
+## 📚 Manufacturer Documentation
 
-Ниже приведено полное содержимое исходных документов по API и Железу.
+Below is the complete content of the original API and Hardware reference documents.
 
 <details>
-<summary><b>Показать техническую документацию (Оборудование)</b></summary>
+<summary><b>Show Technical Documentation (Hardware)</b></summary>
 
 # Technical Documentation: Architecture and Scalable Configuration of the LED Screen
 
@@ -183,7 +187,7 @@ def get_screen_payload(extra_params=None):
 </details>
 
 <details>
-<summary><b>Показать документацию LAN API (Beijing Kystar)</b></summary>
+<summary><b>Show LAN API Documentation (Beijing Kystar)</b></summary>
 
 
 
