@@ -67,6 +67,7 @@ from src.core.media_utils import (
 )
 from src.ui.scene_editor import SceneEditor
 from src.ui.device_media_dialog import DeviceMediaDialog
+from src.ui.dynamic_video_tab import DynamicVideoTab
 from src.ui.styles import DROP_ZONE_HOVER_STYLE, DROP_ZONE_STYLE
 from src.ui.workers import (
     BrightnessWorker,
@@ -169,6 +170,11 @@ class MainWindow(QMainWindow):
     def _setup_ui(self) -> None:
         """Создаёт и компонует все UI-элементы."""
         self.setWindowTitle("Kystar KD6 — LED Control Panel")
+        
+        # Установка иконки приложения
+        logo_path = Path(__file__).parent / "logo.png"
+        if logo_path.exists():
+            self.setWindowIcon(QIcon(str(logo_path)))
         self.setMinimumSize(900, 700)
         self.resize(1000, 900)
 
@@ -199,6 +205,9 @@ class MainWindow(QMainWindow):
         self.tab_scene = QWidget()
         self.tab_scene_layout = QVBoxLayout(self.tab_scene)
         self.tabs.addTab(self.tab_scene, "Визуальный редактор зон (Multi-layer)")
+
+        self.tab_dynamic_video = DynamicVideoTab(self)
+        self.tabs.addTab(self.tab_dynamic_video, "Динамическое видео")
 
         # --- Заголовок ---
         self._create_header()
@@ -238,7 +247,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
         
-        title = QLabel("ПРОГРАММЫ (ПЛЕЙЛИСТЫ)")
+        title = QLabel("Программы (Плейлисты)")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
 
@@ -293,7 +302,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         
-        title = QLabel("МЕДИАБИБЛИОТЕКА")
+        title = QLabel("Медиабиблиотека")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
         
@@ -352,7 +361,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 12, 16, 16)
         
-        title = QLabel("ЯРКОСТЬ ЭКРАНА")
+        title = QLabel("Яркость экрана")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
         
@@ -377,12 +386,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 12, 16, 16)
         
-        title = QLabel("УПРАВЛЕНИЕ УСТРОЙСТВОМ")
+        title = QLabel("Управление устройством")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
         
         btn_layout = QHBoxLayout()
-        self.btn_screen_power = QPushButton("⏻  Экран ВКЛ / ВЫКЛ")
+        self.btn_screen_power = QPushButton("⏻  Экран вкл / выкл")
         self.btn_screen_power.setObjectName("btn_ghost")
         self.btn_screen_power.clicked.connect(self._on_toggle_screen)
         btn_layout.addWidget(self.btn_screen_power)
@@ -1146,6 +1155,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Очистка при закрытии окна."""
+        # Очищаем ресурсы динамического видеоплеера
+        if hasattr(self, "tab_dynamic_video"):
+            self.tab_dynamic_video.cleanup()
+
         # Принудительно обрываем все сетевые соединения, 
         # чтобы потоки, зависшие на HTTP POST, могли завершиться
         self.client.abort_all_requests()

@@ -1,2 +1,7 @@
 PyQt6>=6.6.0
 requests>=2.31.0
+
+obd
+opencv-python
+numpy
+Flask

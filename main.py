@@ -31,13 +31,14 @@ logging.basicConfig(
 def main() -> None:
     """
     Инициализирует и запускает приложение PyQt6.
-
-    Порядок инициализации:
-    1. Создание QApplication (должно быть первым).
-    2. Применение глобальной QSS-таблицы стилей (Dark Mode).
-    3. Создание главного окна MainWindow.
-    4. Отображение окна и запуск цикла обработки событий Qt.
     """
+    if "--run-obd-scanner" in sys.argv:
+        from src.ui.obd_gui_qt import OBDDashboardQT
+        app = QApplication(sys.argv)
+        window = OBDDashboardQT()
+        window.show()
+        sys.exit(app.exec())
+
     # Создаём экземпляр приложения Qt
     app = QApplication(sys.argv)
 

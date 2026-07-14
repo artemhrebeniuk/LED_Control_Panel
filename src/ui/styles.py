@@ -221,7 +221,7 @@ QGroupBox {{
     background-color: {COLOR_BG_PANEL};
     border: 1px solid {COLOR_BORDER};
     border-radius: 8px;
-    margin-top: 24px;
+    margin-top: 36px;
     padding-top: 16px;
 }}
 
@@ -230,9 +230,9 @@ QGroupBox::title {{
     subcontrol-position: top left;
     padding: 0 4px;
     left: 8px;
-    top: 6px;
+    top: 2px;
     color: {COLOR_TEXT_SECONDARY};
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
     text-transform: uppercase;
 }}

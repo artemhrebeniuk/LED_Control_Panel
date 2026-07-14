@@ -54,15 +54,21 @@ A high-performance, multithreaded LAN control system for managing modular LED di
 ├── src/                           # Codebase Root
 │   ├── core/                      # Business & Control Subsystems
 │   │   ├── config.py              # Configuration Singleton
+│   │   ├── ffmpeg_manager.py      # FFmpeg binary installer & environment locator
 │   │   ├── ffmpeg_renderer.py     # Multi-window Canvas Renderer
 │   │   ├── kystar_client.py       # API Client Wrapper
 │   │   ├── media_utils.py         # File Probe & Validation
 │   │   └── playlists_manager.py   # Playlist Persistence Layer
 │   └── ui/                        # PyQt6 Interface Layer
-│       ├── main_window.py         # Primary GUI
-│       ├── scene_editor.py        # Grid / Window Editor
-│       ├── styles.py              # UI/UX Stylesheets
-│       └── workers.py             # Asynchronous Threads
+│       ├── device_media_dialog.py # Media controller file manager
+│       ├── dynamic_video_tab.py   # Adaptive video playback control tab
+│       ├── ffmpeg_download_dialog.py # FFmpeg installation helper
+│       ├── logo.png               # Main application icon asset (square 938x938)
+│       ├── main_window.py         # Primary GUI container
+│       ├── obd_gui_qt.py          # OBD-II scanner & diagnostics tab
+│       ├── scene_editor.py        # Grid / Window layout editor
+│       ├── styles.py              # UI/UX Stylesheets & theme definitions
+│       └── workers.py             # Asynchronous thread executors
 └── main.py                        # Execution Entry Point
 ```
 
@@ -86,6 +92,41 @@ The system leverages FFmpeg for dynamic layout composition.
 The network interface communicates with the Kystar KD6 over HTTP:
 * **Identification Protocol**: Before uploading files, the client calculates a custom unique payload identifier: MD5 checksum + File Size. This allows the Kystar hardware to skip redundant uploads.
 * **Dynamic Geometry**: Grid geometries are calculated dynamically. The frontend layout is constructed dynamically based on the current parameters of the screen configuration class.
+
+## 🏎 Adaptive Dynamic Video Subsystem (OBD-II Real-time Sync)
+
+The application features an advanced real-time video playback tab designed to dynamically map video playback speed and direction to vehicle speed telemetry received from the OBD-II bus (via UDP broadcast packets on port `28765` or from the local OBD-II scanner simulation thread).
+
+### 1. Architectural Pipeline & Mathematical Engine
+```text
++-------------------+      UDP (Port 28765)      +--------------------+      Target Frame      +--------------------+
+|  OBD-II Telemetry  | =========================> |   PlaybackThread   | ====================> |   ExternalWindow   |
+|  (Vehicle Speed)  |                            | (Smoothing/Filter) |                       | (1:1 Pixel Map)    |
++-------------------+                            +--------------------+                       +--------------------+
+```
+The playback loop runs in a dedicated thread (`PlaybackThread`) at a stable 60Hz update rate. The target frame index is computed using a variable update timestep:
+* **Smoothing Filter**: To prevent jitter due to network transmission latency, raw speed inputs are smoothed via an Exponential Moving Average (EMA) filter:
+  $$	ext{Speed}_{	ext{smoothed}} = 	ext{Speed}_{	ext{smoothed}} + (	ext{Speed}_{	ext{raw}} - 	ext{Speed}_{	ext{smoothed}}) 	imes lpha$$
+  *(Where $lpha$ is the smoothing factor adjustable via the GUI).*
+* **Rate Step Integration**: The increment in frame index ($\Delta F$) for a given loop interval ($dt$) is calculated dynamically:
+  $$\Delta F = 	ext{FPS}_{	ext{video}} 	imes dt 	imes \left(rac{	ext{Speed}_{	ext{smoothed}}}{30.0}
+ight)^{0.65} 	imes 	ext{Sensitivity} 	imes 	ext{Direction}$$
+
+### 2. Available Playback Modes
+The interface provides five distinct dynamic playback modes tailored for different artistic and diagnostic requirements:
+1. **`1: Reversible (Dynamic)`**: Full real-time speed mapping. The video speed scales with vehicle speed. If deceleration is sharp or if the vehicle moves backwards, the video plays in reverse in real-time.
+2. **`2: Classic (Forward Only)`**: Direction is clamped to forward only. Acceleration increases playback speed, but braking does not trigger reverse playback.
+3. **`3: Autoplay (Loop)`**: Independent playback at a constant speed rate, activating standard `PLAY` and `PAUSE` controls.
+4. **`4: Reversible (Clamp)`**: Reversible speed mapping, but clamped to prevent wrapping, aligning the loop center around the neutral frame.
+5. **`5: Centered (Loop)`**: Loops centered around a specific midpoint frame.
+
+### 3. High-Performance LED Optimizations
+* **Zero-Lag RAM Caching**: Video files are parsed on load and cached in RAM directly as uncompressed `QImage` objects. During playback, the rendering thread performs no CPU-intensive JPEG/H.264 decoding (`cv2.imdecode` is bypassed), reducing rendering CPU usage to near **0%** and ensuring stutter-free transitions.
+* **1:1 Pixel-Perfect Mapping**: LED controller cards capture specific regions of the HDMI secondary display input. The borderless projection window (`ExternalVideoWindow`) supports right-click choices:
+  - **Letterbox**: Proportional scaling with black bars.
+  - **Stretch**: Stretches the frame to fill the screen layout.
+  - **Original Size (1:1) - Top-Left**: Renders the frame at exactly its native resolution (e.g. `160x80`) in the top-left corner without scaling artifacts, allowing pixel-perfect capturing by the Kystar controller.
+  - **Original Size (1:1) - Centered**: Renders at native size centered on the screen.
 
 ---
 

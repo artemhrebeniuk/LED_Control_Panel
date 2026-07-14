@@ -701,3 +701,15 @@ class KystarClient:
             Ответ API с массивом окон в поле data.
         """
         return self._get("curWindows")
+
+    def start_live_stream(self, stream_url: str) -> dict[str, Any]:
+        """
+        Запускает воспроизведение живого потока (RTSP/RTMP/UDP) на контроллере.
+        """
+        return self._get("starLive", params={"url": stream_url})
+
+    def stop_live_stream(self) -> dict[str, Any]:
+        """
+        Останавливает воспроизведение живого потока на контроллере.
+        """
+        return self._get("stopLive")
