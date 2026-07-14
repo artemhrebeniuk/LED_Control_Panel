@@ -106,11 +106,14 @@ The application features an advanced real-time video playback tab designed to dy
 ```
 The playback loop runs in a dedicated thread (`PlaybackThread`) at a stable 60Hz update rate. The target frame index is computed using a variable update timestep:
 * **Smoothing Filter**: To prevent jitter due to network transmission latency, raw speed inputs are smoothed via an Exponential Moving Average (EMA) filter:
-  $$	ext{Speed}_{	ext{smoothed}} = 	ext{Speed}_{	ext{smoothed}} + (	ext{Speed}_{	ext{raw}} - 	ext{Speed}_{	ext{smoothed}}) 	imes lpha$$
-  *(Where $lpha$ is the smoothing factor adjustable via the GUI).*
-* **Rate Step Integration**: The increment in frame index ($\Delta F$) for a given loop interval ($dt$) is calculated dynamically:
-  $$\Delta F = 	ext{FPS}_{	ext{video}} 	imes dt 	imes \left(rac{	ext{Speed}_{	ext{smoothed}}}{30.0}
-ight)^{0.65} 	imes 	ext{Sensitivity} 	imes 	ext{Direction}$$
+  ```
+  Speed_smoothed = Speed_smoothed + (Speed_raw - Speed_smoothed) * alpha
+  ```
+  *(Where `alpha` is the smoothing factor adjustable via the GUI).*
+* **Rate Step Integration**: The increment in frame index (`delta_frames`) for a given loop interval (`dt`) is calculated dynamically:
+  ```
+  delta_frames = Video_FPS * dt * (Speed_smoothed / 30.0)^0.65 * Sensitivity * Direction
+  ```
 
 ### 2. Available Playback Modes
 The interface provides five distinct dynamic playback modes tailored for different artistic and diagnostic requirements:
