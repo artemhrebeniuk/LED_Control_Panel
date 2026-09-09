@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-dynamic_video_tab.py — Вкладка адаптивного видеоплеера (Динамическое видео).
-Принимает телеметрию (скорость автомобиля) по UDP на порту 28765 и меняет скорость
-воспроизведения видео в реальном времени.
+dynamic_video_tab.py — Adaptive video player tab (Dynamic Video).
+Receives vehicle telemetry (speed) via UDP on port 28765 and adjusts
+video playback speed dynamically in real-time.
 """
 
 import sys
@@ -379,9 +380,9 @@ class VideoLoader(QThread):
                     frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
                     h_f, w_f = new_h, new_w
                     
-                # Сохраняем кадры как сырые QImage в RAM, без сжатия в JPEG.
-                # Это сохраняет 100% оригинального качества изображения и полностью убирает задержки
-                # на декодирование во время воспроизведения (0% CPU на декодер).
+                # Store frames as raw QImage objects in RAM without JPEG compression.
+                # This preserves 100% original visual fidelity and eliminates decoding latency
+                # during playback (0% CPU overhead for decoders).
                 bytes_per_line = 3 * w_f
                 qimg = QImage(frame.data, w_f, h_f, bytes_per_line, QImage.Format.Format_BGR888).copy()
                 cache.append(qimg)
@@ -616,7 +617,7 @@ class VideoDisplayWidget(QWidget):
         super().__init__(parent)
         self.image = None
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.text = "Перетащите сюда видео для динамического режима"
+        self.text = "Drag & Drop video file here for dynamic playback"
         self.loading_overlay = None
 
     def mousePressEvent(self, event):
@@ -976,7 +977,7 @@ class DynamicVideoTab(QWidget):
         self.loading_spinner = LoadingSpinner()
         title_row.addWidget(self.loading_spinner)
         
-        self.load_label = QLabel("КЭШИРОВАНИЕ КАДРОВ...")
+        self.load_label = QLabel("CACHING FRAMES...")
         self.load_label.setStyleSheet("""
             color: #38BDF8; 
             font-size: 13px; 
@@ -993,7 +994,7 @@ class DynamicVideoTab(QWidget):
         panel_layout.addWidget(self.load_bar)
         
         bottom_row = QHBoxLayout()
-        self.load_stats_label = QLabel("ЗАГРУЗКА...")
+        self.load_stats_label = QLabel("LOADING...")
         self.load_stats_label.setStyleSheet("""
             color: #94A3B8;
             font-size: 12px;
@@ -1036,7 +1037,7 @@ class DynamicVideoTab(QWidget):
         top_row = QHBoxLayout()
         top_row.setSpacing(10)
         
-        self.load_btn = QPushButton("📂 Видеофайл")
+        self.load_btn = QPushButton("📂 Video File")
         self.load_btn.setObjectName("action_btn")
         self.load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.load_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1044,7 +1045,7 @@ class DynamicVideoTab(QWidget):
         self.load_btn.clicked.connect(self.open_file_dialog)
         top_row.addWidget(self.load_btn)
 
-        self.launch_obd_btn = QPushButton("🚀 Сканер OBD-II")
+        self.launch_obd_btn = QPushButton("🚀 OBD-II Scanner")
         self.launch_obd_btn.setObjectName("obd_btn")
         self.launch_obd_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.launch_obd_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1058,7 +1059,7 @@ class DynamicVideoTab(QWidget):
         self.launch_obd_btn.setGraphicsEffect(obd_glow)
         top_row.addWidget(self.launch_obd_btn)
         
-        self.proj_btn = QPushButton("📺 Трансляция")
+        self.proj_btn = QPushButton("📺 Projector")
         self.proj_btn.setObjectName("proj_btn")
         self.proj_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.proj_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -1068,7 +1069,7 @@ class DynamicVideoTab(QWidget):
   
         top_row.addStretch()
 
-        mode_label = QLabel("Режим:")
+        mode_label = QLabel("Mode:")
         mode_label.setObjectName("header_label")
         top_row.addWidget(mode_label)
 
@@ -1105,7 +1106,7 @@ class DynamicVideoTab(QWidget):
         play_glow.setColor(QColor(56, 189, 248, 60))
         play_glow.setOffset(0, 0)
         self.play_pause_btn.setGraphicsEffect(play_glow)
-        self.play_pause_btn.setEnabled(False) # По умолчанию отключена (активируется в Autoplay)
+        self.play_pause_btn.setEnabled(False) # Disabled by default (activated in Autoplay)
         top_row.addWidget(self.play_pause_btn)
 
         controls_layout.addLayout(top_row)
@@ -1120,7 +1121,7 @@ class DynamicVideoTab(QWidget):
 
         # Slider 1
         slider1_row = QHBoxLayout()
-        sens_label = QLabel("Чувствительность")
+        sens_label = QLabel("Sensitivity")
         sens_label.setObjectName("slider_label")
         sens_label.setFixedWidth(170)
         slider1_row.addWidget(sens_label)
@@ -1141,7 +1142,7 @@ class DynamicVideoTab(QWidget):
 
         # Slider 2
         slider2_row = QHBoxLayout()
-        smooth_label = QLabel("Сглаживание")
+        smooth_label = QLabel("Smoothing")
         smooth_label.setObjectName("slider_label")
         smooth_label.setFixedWidth(170)
         slider2_row.addWidget(smooth_label)
@@ -1161,7 +1162,7 @@ class DynamicVideoTab(QWidget):
         sliders_layout.addLayout(slider2_row)
 
         bottom_row.addLayout(sliders_layout)
-        bottom_row.addStretch(1) # Создает свободное пространство (отступ) между слайдерами и панелью
+        bottom_row.addStretch(1) # Space between sliders and panel
 
         # Telemetry Display (info_panel)
         self.info_panel = QWidget()
@@ -1238,7 +1239,7 @@ class DynamicVideoTab(QWidget):
                 cwd=str(project_root)
             )
                 
-            self.launch_obd_btn.setText("✅ СКАНЕР РАБОТАЕТ")
+            self.launch_obd_btn.setText("✅ SCANNER ACTIVE")
             self.launch_obd_btn.setStyleSheet("background-color: #10B981; color: #FFFFFF; border: 1px solid #10B981;")
             
             self.obd_monitor_timer.start(500)
@@ -1253,7 +1254,7 @@ class DynamicVideoTab(QWidget):
                 self.reset_obd_button()
 
     def reset_obd_button(self):
-        self.launch_obd_btn.setText("🚀 СКАНЕР OBD-II")
+        self.launch_obd_btn.setText("🚀 OBD-II SCANNER")
         self.launch_obd_btn.setStyleSheet("")
 
     def start_loading(self, path):
@@ -1263,10 +1264,10 @@ class DynamicVideoTab(QWidget):
             
         self.loading_widget.show()
         self.load_bar.setValue(0)
-        self.load_label.setText("КЭШИРОВАНИЕ КАДРОВ В RAM...")
-        self.load_stats_label.setText("ПОДГОТОВКА КЭША...")
+        self.load_label.setText("CACHING FRAMES TO RAM...")
+        self.load_stats_label.setText("PREPARING CACHE...")
         self.load_pct_label.setText("0%")
-        self.video_display.set_text("Кэширование video...")
+        self.video_display.set_text("Caching video...")
         
         if self.external_window:
             self.external_window.set_image(None)
@@ -1281,9 +1282,9 @@ class DynamicVideoTab(QWidget):
         self.load_bar.setValue(prog)
         if "(" in msg:
             stats_part = msg.split("(")[-1].replace(")", "")
-            self.load_stats_label.setText(f"ОБЪЕМ: {stats_part}")
+            self.load_stats_label.setText(f"SIZE: {stats_part}")
         else:
-            self.load_stats_label.setText("КЭШИРОВАНИЕ ВИДЕО")
+            self.load_stats_label.setText("CACHING VIDEO")
         self.load_pct_label.setText(f"{prog}%")
 
     def on_load_finished(self, cache, fps):
@@ -1292,10 +1293,10 @@ class DynamicVideoTab(QWidget):
         
     def on_load_error(self, err_msg):
         self.loading_widget.hide()
-        self.video_display.set_text(f"Ошибка: {err_msg}")
+        self.video_display.set_text(f"Error: {err_msg}")
 
     def on_info_updated(self, smoothed_speed, delta_frames, current_frame, total_frames):
-        self.frame_val_label.setText(f"КАДР: {current_frame} / {total_frames}")
+        self.frame_val_label.setText(f"FRAME: {current_frame} / {total_frames}")
         mode_idx = self.mode_dropdown.currentIndex()
         
         if mode_idx == 2:
@@ -1347,7 +1348,7 @@ class DynamicVideoTab(QWidget):
                 
             self.external_window.show()
             self.proj_btn.setProperty("active", "true")
-            self.proj_btn.setText("📺 ТРАНСЛЯЦИЯ ВКЛ")
+            self.proj_btn.setText("📺 BROADCAST ON")
             self.proj_btn.style().unpolish(self.proj_btn)
             self.proj_btn.style().polish(self.proj_btn)
             
@@ -1369,7 +1370,7 @@ class DynamicVideoTab(QWidget):
             self.external_window = None
             
         self.proj_btn.setProperty("active", "false")
-        self.proj_btn.setText("📺 ТРАНСЛЯЦИЯ")
+        self.proj_btn.setText("📺 PROJECTOR")
         self.proj_btn.setGraphicsEffect(None)
         self.proj_btn.style().unpolish(self.proj_btn)
         self.proj_btn.style().polish(self.proj_btn)

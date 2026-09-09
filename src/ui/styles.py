@@ -1,20 +1,21 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-styles.py — QSS-таблица стилей для приложения Kystar KD6 Control.
+styles.py — QSS stylesheet for Kystar KD6 Control Panel.
 
-Тема: Premium OLED Dark Mode (Flat Cards & Emerald Accents)
+Theme: Premium OLED Dark Mode (Flat Cards & Emerald Accents)
 """
 
 # ====================================================================
-# ЦВЕТОВЫЕ КОНСТАНТЫ
+# COLOR CONSTANTS
 # ====================================================================
-COLOR_BG_DEEPEST = "#09090B"  # zinc-950 (Глубокий черный фон приложения)
-COLOR_BG_PANEL = "#121214"    # Немного светлее (для карточек/сессий)
-COLOR_BG_CARD = "#18181B"     # zinc-900 (Вложенные элементы, кнопки)
-COLOR_BG_HOVER = "#27272A"    # zinc-800 (Наведение)
+COLOR_BG_DEEPEST = "#09090B"  # zinc-950 (Deep background canvas)
+COLOR_BG_PANEL = "#121214"    # Slightly lighter surface (panels / sections)
+COLOR_BG_CARD = "#18181B"     # zinc-900 (Cards, buttons, inputs)
+COLOR_BG_HOVER = "#27272A"    # zinc-800 (Hover states)
 
-COLOR_ACCENT = "#10B981"      # emerald-500 (Основное действие)
-COLOR_ACCENT_HOVER = "#059669" # emerald-600 (Нажатие на основное действие)
+COLOR_ACCENT = "#10B981"      # emerald-500 (Primary accent action)
+COLOR_ACCENT_HOVER = "#059669" # emerald-600 (Active/pressed accent)
 
 COLOR_TEXT_PRIMARY = "#FAFAFA" # zinc-50
 COLOR_TEXT_SECONDARY = "#A1A1AA" # zinc-400
@@ -31,10 +32,10 @@ COLOR_BORDER = "#27272A"      # zinc-800
 
 STYLESHEET = f"""
 /* ================================================================
-   ГЛОБАЛЬНЫЕ СТИЛИ
+   GLOBAL STYLES
    ================================================================ */
 
-QMainWindow {{
+QMainWindow, QDialog {{
     background-color: {COLOR_BG_DEEPEST};
 }}
 
@@ -44,8 +45,56 @@ QWidget {{
     font-size: 13px;
 }}
 
+QRadioButton, QCheckBox {{
+    spacing: 8px;
+    color: {COLOR_TEXT_PRIMARY};
+}}
+
+QRadioButton::indicator, QCheckBox::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1px solid {COLOR_BORDER};
+    background-color: {COLOR_BG_CARD};
+}}
+
+QRadioButton::indicator {{
+    border-radius: 8px;
+}}
+
+QCheckBox::indicator {{
+    border-radius: 4px;
+}}
+
+QRadioButton::indicator:checked, QCheckBox::indicator:checked {{
+    background-color: {COLOR_ACCENT};
+    border: 1px solid {COLOR_ACCENT};
+}}
+
+QTableWidget {{
+    background-color: {COLOR_BG_PANEL};
+    border: 1px solid {COLOR_BORDER};
+    border-radius: 6px;
+    gridline-color: {COLOR_BORDER};
+    color: {COLOR_TEXT_PRIMARY};
+}}
+
+QHeaderView::section {{
+    background-color: {COLOR_BG_CARD};
+    color: {COLOR_TEXT_SECONDARY};
+    border: none;
+    border-bottom: 1px solid {COLOR_BORDER};
+    border-right: 1px solid {COLOR_BORDER};
+    padding: 6px;
+    font-weight: bold;
+}}
+
+QTableWidget::item:selected {{
+    background-color: rgba(16, 185, 129, 0.2);
+    color: {COLOR_TEXT_PRIMARY};
+}}
+
 /* ================================================================
-   КАРТОЧКИ (Собственный класс QWidget#card)
+   CARDS (Custom widget QWidget#card)
    ================================================================ */
 QWidget#card {{
     background-color: {COLOR_BG_PANEL};
@@ -119,7 +168,7 @@ QScrollBar::sub-line:vertical {{
 }}
 
 /* ================================================================
-   КНОПКИ (QPushButton)
+   BUTTONS (QPushButton)
    ================================================================ */
 
 QPushButton {{
@@ -148,7 +197,7 @@ QPushButton:disabled {{
     border-color: {COLOR_BG_PANEL};
 }}
 
-/* Основная кнопка действия (акцентная) */
+/* Primary Action Button */
 QPushButton#btn_primary,
 QPushButton#btn_send_text,
 QPushButton#btn_play_media {{
@@ -172,7 +221,7 @@ QPushButton#btn_play_media:pressed {{
     background-color: {COLOR_ACCENT_HOVER};
 }}
 
-/* Вторичные кнопки (ранее Ghost) */
+/* Secondary Buttons (Ghost) */
 QPushButton#btn_ghost {{
     background-color: {COLOR_BG_CARD};
     border: 1px solid {COLOR_BORDER};
@@ -184,7 +233,7 @@ QPushButton#btn_ghost:hover {{
     border-color: {COLOR_TEXT_SECONDARY};
 }}
 
-/* Кнопка опасного действия (красная, Ghost) */
+/* Destructive / Warning Button (Red) */
 QPushButton#btn_reboot, QPushButton#btn_delete {{
     background-color: transparent;
     border: 1px solid rgba(239, 68, 68, 0.3);
@@ -196,7 +245,7 @@ QPushButton#btn_reboot:hover, QPushButton#btn_delete:hover {{
     border-color: {COLOR_ERROR};
 }}
 
-/* Сворачиваемая кнопка логов */
+/* Collapsible Log Toggle Button */
 QPushButton#btn_toggle_logs {{
     background-color: transparent;
     border: none;
@@ -214,7 +263,7 @@ QPushButton#btn_toggle_logs:hover {{
 }}
 
 /* ================================================================
-   ГРУППЫ И КАРТОЧКИ (QGroupBox)
+   CONTAINERS & CARDS (QGroupBox)
    ================================================================ */
 
 QGroupBox {{
@@ -238,7 +287,7 @@ QGroupBox::title {{
 }}
 
 /* ================================================================
-   ПОЛЯ ВВОДА (QLineEdit, QSpinBox, QComboBox)
+   INPUT FIELDS (QLineEdit, QSpinBox, QComboBox)
    ================================================================ */
 
 QLineEdit, QSpinBox, QComboBox {{
@@ -293,7 +342,7 @@ QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
 }}
 
 /* ================================================================
-   СЛАЙДЕР ЯРКОСТИ (QSlider)
+   BRIGHTNESS SLIDER (QSlider)
    ================================================================ */
 
 QSlider {{
@@ -325,7 +374,7 @@ QSlider::handle:horizontal:hover {{
 }}
 
 /* ================================================================
-   СПИСКИ (QListWidget)
+   LISTS (QListWidget)
    ================================================================ */
 
 QListWidget {{
@@ -353,7 +402,7 @@ QListWidget::item:hover {{
 }}
 
 /* ================================================================
-   ПРОГРЕСС-БАР (QProgressBar)
+   PROGRESS BAR (QProgressBar)
    ================================================================ */
 
 QProgressBar {{
@@ -371,7 +420,7 @@ QProgressBar::chunk {{
 }}
 
 /* ================================================================
-   ЛОГ СОБЫТИЙ (QTextEdit)
+   EVENT LOG (QTextEdit)
    ================================================================ */
 
 QTextEdit#log_panel {{
@@ -385,7 +434,7 @@ QTextEdit#log_panel {{
 }}
 
 /* ================================================================
-   МЕТКИ (QLabel)
+   LABELS (QLabel)
    ================================================================ */
 
 QLabel {{
@@ -434,7 +483,7 @@ QLabel#label_status_offline {{
 }}
 
 /* ================================================================
-   РАЗДЕЛИТЕЛЬНАЯ ЛИНИЯ
+   SEPARATOR
    ================================================================ */
 
 QFrame#separator {{
@@ -458,7 +507,7 @@ QToolTip {{
 """
 
 # ====================================================================
-# СТИЛЬ ДЛЯ ЗОНЫ DRAG-AND-DROP (применяется программно)
+# DRAG-AND-DROP ZONE STYLING
 # ====================================================================
 
 DROP_ZONE_STYLE = f"""

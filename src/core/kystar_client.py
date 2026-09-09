@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-kystar_client.py — Чистый API-клиент для медиаплеера Kystar KD6.
+kystar_client.py — Pure API client for Kystar KD6 media player.
 
-Этот модуль содержит ТОЛЬКО сетевую логику:
-- HTTP GET/POST запросы к устройству
-- Расчёт MD5-хэшей файлов
-- Двухэтапный протокол загрузки медиа
-- Сборку JSON-пакетов для API
+This module contains ONLY networking and protocol logic:
+- HTTP GET/POST requests to device
+- MD5 file hashing and checksum calculation
+- Two-stage media upload protocol
+- Construction of JSON payloads for API
 
-Никакого PyQt6 или UI-кода здесь нет. Все методы являются
-блокирующими (синхронными) и должны вызываться исключительно
-из рабочих потоков (QThread), чтобы не блокировать UI.
+Contains no PyQt6 or UI logic. All methods are synchronous (blocking)
+and must be executed within background QThread workers to prevent UI freezes.
 """
 
 import hashlib
@@ -39,21 +39,21 @@ logger = logging.getLogger(__name__)
 
 
 class KystarClientError(Exception):
-    """Базовое исключение для ошибок API-клиента Kystar."""
+    """Base exception for Kystar API client errors."""
 
 
 class KystarClient:
     """
-    Синхронный HTTP-клиент для управления медиаплеером Kystar KD6.
+    Synchronous HTTP client for managing Beijing Kystar KD6 media players.
 
-    Все методы выполняют блокирующие HTTP-запросы через библиотеку requests.
-    Для использования в PyQt6 вызывайте эти методы ТОЛЬКО из QThread-воркеров.
+    All methods perform blocking HTTP requests using the requests library.
+    For PyQt6 integration, invoke these methods ONLY from worker QThreads.
 
     Attributes:
-        base_url: Базовый URL API (http://IP:18080).
-        reboot_url: URL для перезагрузки (http://IP:18081).
-        timeout: Таймаут HTTP-запросов в секундах.
-        session: Переиспользуемая HTTP-сессия для keep-alive соединений.
+        base_url: Base API URL (http://IP:18080).
+        reboot_url: Hardware reboot URL (http://IP:18081).
+        timeout: HTTP request timeout in seconds.
+        session: Persistent requests.Session for TCP keep-alive connections.
     """
 
     def __init__(
@@ -67,50 +67,50 @@ class KystarClient:
         self.base_url = base_url or default_base
         self.reboot_url = reboot_url or default_reboot
         self.timeout = timeout
-        # Переиспользуем сессию для эффективности TCP-соединений
         self.session = requests.Session()
 
     def __del__(self) -> None:
-        """Закрывает HTTP сессию при уничтожении объекта."""
+        """Closes HTTP session when object is destroyed."""
         try:
             self.session.close()
         except Exception:
             pass
 
     def update_urls(self, base_url: str, reboot_url: str) -> None:
-        """Обновляет URL-адреса для связи с устройством."""
+        """Updates communication URLs for device connection."""
         self.base_url = base_url
         self.reboot_url = reboot_url
         self.abort_all_requests()
 
     def abort_all_requests(self) -> None:
-        """Принудительно закрывает все активные сетевые соединения.
-        Полезно для прерывания долгой загрузки при закрытии приложения."""
+        """
+        Forces all active HTTP connections to terminate.
+        Used to abort uploads immediately when switching modes or closing app.
+        """
         try:
             self.session.close()
-            # Пересоздаем сессию для возможности последующих запросов
             self.session = requests.Session()
         except Exception as e:
-            logger.debug("Ошибка при обрыве соединений: %s", e)
+            logger.debug("Error while aborting requests: %s", e)
 
     # ================================================================
-    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+    # HELPER HTTP METHODS
     # ================================================================
 
     def _get(self, endpoint: str, url_base: str | None = None, **kwargs) -> dict[str, Any]:
         """
-        Выполняет HTTP GET запрос к API устройства.
+        Performs HTTP GET request to player API.
 
         Args:
-            endpoint: Путь эндпоинта (например, '/device').
-            url_base: Альтернативный базовый URL (для порта 18081).
-            **kwargs: Дополнительные параметры для requests.get().
+            endpoint: API path (e.g. '/device').
+            url_base: Optional alternate base URL (e.g. port 18081 for reboot).
+            **kwargs: Extra arguments for requests.get().
 
         Returns:
-            Распарсенный JSON-ответ в виде словаря.
+            Parsed JSON response dictionary.
 
         Raises:
-            KystarClientError: При ошибке соединения или невалидном ответе.
+            KystarClientError: On connection failure, timeout, or invalid JSON.
         """
         base = url_base or self.base_url
         url = f"{base}/{endpoint.lstrip('/')}"
@@ -119,33 +119,33 @@ class KystarClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.ConnectionError as e:
-            raise KystarClientError(f"Нет соединения с устройством: {e}") from e
+            raise KystarClientError(f"No connection to device: {e}") from e
         except requests.exceptions.Timeout as e:
-            raise KystarClientError(f"Таймаут запроса к {url}: {e}") from e
+            raise KystarClientError(f"Request timeout to {url}: {e}") from e
         except requests.exceptions.RequestException as e:
-            raise KystarClientError(f"Ошибка HTTP запроса: {e}") from e
+            raise KystarClientError(f"HTTP request error: {e}") from e
         except json.JSONDecodeError as e:
-            raise KystarClientError(f"Невалидный JSON в ответе: {e}") from e
+            raise KystarClientError(f"Invalid JSON in response: {e}") from e
 
     def _post(self, endpoint: str, params: dict | None = None,
               data: Any = None, files: dict | None = None,
               json_data: Any = None, **kwargs) -> dict[str, Any]:
         """
-        Выполняет HTTP POST запрос к API устройства.
+        Performs HTTP POST request to player API.
 
         Args:
-            endpoint: Путь эндпоинта.
-            params: Query-параметры URL (?key=value).
-            data: Тело запроса (form-encoded).
-            files: Файлы для multipart-загрузки.
-            json_data: JSON-тело запроса.
-            **kwargs: Дополнительные параметры для requests.post().
+            endpoint: API endpoint path.
+            params: Query parameters (?key=value).
+            data: Form-encoded request body.
+            files: Multipart upload file payload.
+            json_data: JSON payload.
+            **kwargs: Extra arguments for requests.post().
 
         Returns:
-            Распарсенный JSON-ответ.
+            Parsed JSON response dictionary.
 
         Raises:
-            KystarClientError: При ошибке соединения или невалидном ответе.
+            KystarClientError: On network errors or invalid responses.
         """
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         try:
@@ -161,27 +161,23 @@ class KystarClient:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.ConnectionError as e:
-            raise KystarClientError(f"Нет соединения с устройством: {e}") from e
+            raise KystarClientError(f"No connection to device: {e}") from e
         except requests.exceptions.Timeout as e:
-            raise KystarClientError(f"Таймаут запроса к {url}: {e}") from e
+            raise KystarClientError(f"Request timeout to {url}: {e}") from e
         except requests.exceptions.RequestException as e:
-            raise KystarClientError(f"Ошибка HTTP запроса: {e}") from e
+            raise KystarClientError(f"HTTP request error: {e}") from e
         except json.JSONDecodeError as e:
-            raise KystarClientError(f"Невалидный JSON в ответе: {e}") from e
+            raise KystarClientError(f"Invalid JSON in response: {e}") from e
 
     # ================================================================
-    # ИНФОРМАЦИЯ ОБ УСТРОЙСТВЕ
+    # DEVICE TELEMETRY & STATUS
     # ================================================================
 
     def ping(self) -> bool:
         """
-        Проверяет доступность устройства по сети.
-
-        Выполняет GET /device с коротким таймаутом (2 сек).
-        Используется фоновым PingWorker для обновления индикатора статуса.
-
-        Returns:
-            True если устройство доступно, False если нет.
+        Checks device connectivity over the network.
+        Sends GET /device with a short 2-second timeout.
+        Used by background PingWorker to update UI connection indicator.
         """
         try:
             response = self.session.get(
@@ -195,108 +191,81 @@ class KystarClient:
 
     def get_device_info(self) -> dict[str, Any]:
         """
-        Получает детальную информацию об устройстве.
-
-        Эндпоинт: GET /device
+        Retrieves comprehensive hardware device information.
+        Endpoint: GET /device
 
         Returns:
-            Словарь с полями: appVersion, deviceName, screenWidth,
-            screenHeight, usableSpace, totalSpace и др.
+            Dictionary with appVersion, deviceName, screenWidth,
+            screenHeight, usableSpace, totalSpace, etc.
         """
         result = self._get("device")
         return result.get("data", result)
 
     def get_screen_params(self) -> dict[str, Any]:
         """
-        Получает текущие параметры экрана (яркость, громкость, состояние).
-
-        Эндпоинт: GET /getScreenParams
+        Retrieves current screen parameters (brightness, audio, power state).
+        Endpoint: GET /getScreenParams
 
         Returns:
-            Словарь с полями: bright (0-100), voice (0-1),
-            screenOn (bool), contrast (int).
+            Dictionary with bright (0-100), voice (0-1), screenOn (bool), contrast (int).
         """
         return self._get("getScreenParams")
 
     # ================================================================
-    # УПРАВЛЕНИЕ ЭКРАНОМ
+    # SCREEN CONTROLS
     # ================================================================
 
     def set_brightness(self, value: int) -> dict[str, Any]:
         """
-        Устанавливает яркость экрана.
-
-        Эндпоинт: POST /setting/bright?bright=N
+        Sets screen brightness level.
+        Endpoint: POST /setting/bright?bright=N
 
         Args:
-            value: Значение яркости от 0 (выключено) до 100 (максимум).
-
-        Returns:
-            Ответ API (code: 200 при успехе).
+            value: Brightness percentage from 0 (black) to 100 (maximum).
         """
-        # Ограничиваем значение допустимым диапазоном
         value = max(0, min(100, value))
-        logger.info("Установка яркости: %d", value)
+        logger.info("Setting screen brightness: %d%%", value)
         return self._post("setting/bright", params={"bright": value})
 
     def set_screen_power(self, on: bool) -> dict[str, Any]:
         """
-        Включает или выключает экран.
-
-        Эндпоинт: POST /setting/screen?screen=true|false
-
-        Args:
-            on: True для включения, False для выключения.
-
-        Returns:
-            Ответ API.
+        Enables or disables screen output (power toggle).
+        Endpoint: POST /setting/screen?screen=true|false
         """
         screen_value = "true" if on else "false"
-        logger.info("Экран: %s", "ВКЛ" if on else "ВЫКЛ")
+        logger.info("Screen power set to: %s", "ON" if on else "OFF")
         return self._post("setting/screen", params={"screen": screen_value})
 
     def reboot(self) -> dict[str, Any]:
         """
-        Перезагружает медиаплеер.
-
-        Эндпоинт: GET :18081/reboot (ВНИМАНИЕ: порт 18081, не 18080!)
-
-        Returns:
-            Ответ API.
+        Reboots the media player hardware.
+        Endpoint: GET :18081/reboot (Notice: dedicated port 18081).
         """
-        logger.warning("Отправлена команда перезагрузки устройства")
+        logger.warning("Hardware reboot command dispatched to player")
         return self._get("reboot", url_base=self.reboot_url)
 
-
-
     # ================================================================
-    # МЕДИАФАЙЛЫ: ДВУХЭТАПНЫЙ ПРОТОКОЛ ЗАГРУЗКИ
+    # MEDIA FILES: TWO-STAGE UPLOAD PROTOCOL
     # ================================================================
 
     @staticmethod
     def calculate_md5_and_length(file_path: str) -> str:
         """
-        Вычисляет строку md5AndLength для идентификации файла на устройстве.
+        Calculates md5AndLength string identifier according to Kystar SDK protocol.
 
-        Алгоритм из документации Kystar:
-        1. Читаем первые 1 МБ (1024 * 1024 байт) файла.
-           Если файл меньше 1 МБ — читаем весь файл.
-        2. Вычисляем MD5-хэш от прочитанного фрагмента.
-        3. Формируем строку: "{md5_hex}-{полный_размер_файла_в_байтах}"
+        Specification:
+        1. Read the first 1 MB (1024 * 1024 bytes) of the file (or full file if < 1 MB).
+        2. Compute MD5 checksum of this chunk.
+        3. Format string: "{md5_hex}-{full_file_size_in_bytes}".
 
         Args:
-            file_path: Абсолютный путь к файлу.
+            file_path: Path to target media file.
 
         Returns:
-            Строка вида "dddae1f8cb4bdc55b88f6d03edfc6ac2-952324".
-
-        Raises:
-            FileNotFoundError: Если файл не найден.
+            Identifier string (e.g. 'dddae1f8cb4bdc55b88f6d03edfc6ac2-952324').
         """
         file_size = os.path.getsize(file_path)
-
-        # Читаем первый мегабайт для расчёта MD5
-        chunk_size = 1024 * 1024  # 1 МБ
+        chunk_size = 1024 * 1024  # 1 MB
         md5_hash = hashlib.md5()
 
         with open(file_path, "rb") as f:
@@ -305,76 +274,55 @@ class KystarClient:
 
         md5_hex = md5_hash.hexdigest()
         md5_and_length = f"{md5_hex}-{file_size}"
-
-        logger.debug("MD5: %s для файла %s", md5_and_length, file_path)
+        logger.debug("MD5 calculated: %s for %s", md5_and_length, file_path)
         return md5_and_length
 
     def check_upload(self, md5_and_length: str) -> bool:
         """
-        Проверяет, загружен ли файл на устройство.
-
-        Эндпоинт: POST /checkUpload?md5andlength=X
-
-        Args:
-            md5_and_length: Идентификатор файла (md5-size).
+        Verifies if file is already cached in player storage.
+        Endpoint: POST /checkUpload?md5andlength=X
 
         Returns:
-            True если файл уже существует на устройстве (code=200),
-            False если файла нет (code=406).
+            True if cached on player (code=200), False if missing (code=406).
         """
         try:
             result = self._post("checkUpload", params={"md5andlength": md5_and_length})
             exists = result.get("code") == 200
-            logger.info(
-                "Проверка файла %s: %s",
-                md5_and_length,
-                "найден" if exists else "не найден",
-            )
+            logger.info("File check %s: %s", md5_and_length, "EXISTS" if exists else "NOT FOUND")
             return exists
         except KystarClientError:
             return False
 
     def get_all_media(self) -> list[dict[str, Any]]:
         """
-        Получает список всех медиафайлов, загруженных на устройство.
-
-        Эндпоинт: GET /medias
-
-        Returns:
-            Список словарей с информацией о медиафайлах (md5AndLength, name, size, type).
+        Lists all media files stored on the player device.
+        Endpoint: GET /medias
         """
         try:
             result = self._get("medias")
             return result.get("data", [])
         except KystarClientError as e:
-            logger.debug("Ошибка получения списка медиа: %s", e)
+            logger.debug("Error fetching media list: %s", e)
             return []
 
     def delete_media(self, md5_and_length: str) -> tuple[bool, str]:
         """
-        Удаляет медиафайл с устройства для освобождения памяти.
-
-        Эндпоинт: POST /deleteMedia?md5AndLength={md5_and_length}
-
-        Args:
-            md5_and_length: Идентификатор файла.
-
-        Returns:
-            (bool, str): Успешность операции и сообщение.
+        Deletes media file from player storage.
+        Endpoint: POST /deleteMedia?md5AndLength={md5_and_length}
         """
         try:
             result = self._post("deleteMedia", params={"md5AndLength": md5_and_length})
             code = result.get("code")
             if code == 200:
-                logger.info("Файл удален с устройства: %s", md5_and_length)
-                return True, "Успех"
+                logger.info("File deleted from player: %s", md5_and_length)
+                return True, "Success"
             elif code == 501:
-                return False, "Файл сейчас воспроизводится"
+                return False, "File is currently in playback"
             else:
-                msg = result.get("message", "Неизвестная ошибка")
+                msg = result.get("message", "Unknown error")
                 return False, msg
         except KystarClientError as e:
-            logger.debug("Ошибка при удалении файла %s: %s", md5_and_length, e)
+            logger.debug("Error deleting file %s: %s", md5_and_length, e)
             return False, str(e)
 
     def upload_media(
@@ -383,59 +331,42 @@ class KystarClient:
         progress_callback: Any = None,
     ) -> str:
         """
-        Загружает медиафайл на устройство.
+        Uploads local media file to the player device.
 
-        Двухэтапный протокол:
-        1. Вычисляет md5AndLength файла.
-        2. Проверяет наличие через checkUpload.
-        3. Если файла нет — загружает через POST /uploadMedia/{type}/{md5_and_length}.
-
-        Эндпоинт: POST /uploadMedia/{mediaType}/{md5AndLength}
-
-        Args:
-            file_path: Путь к локальному медиафайлу.
-            progress_callback: Опциональный callable(percent: int) для прогресса.
+        Protocol Steps:
+        1. Calculate md5AndLength.
+        2. Query checkUpload to skip redundant transmission if already cached.
+        3. If missing, upload via multipart POST /uploadMedia/{type}/{md5_and_length}.
 
         Returns:
-            Строка md5AndLength загруженного файла.
-
-        Raises:
-            KystarClientError: При ошибке загрузки.
-            ValueError: Если тип файла не поддерживается.
+            md5AndLength identifier string.
         """
         path = Path(file_path)
         extension = path.suffix.lower()
 
-        # Определяем тип медиа (1=видео, 2=изображение)
         media_type = get_media_type(extension)
         if media_type is None:
-            raise ValueError(f"Неподдерживаемый тип файла: {extension}")
+            raise ValueError(f"Unsupported media extension: {extension}")
 
-        # Шаг 1: Вычисляем идентификатор файла
         if progress_callback:
             progress_callback(10)
         md5_and_length = self.calculate_md5_and_length(file_path)
 
-        # Шаг 2: Проверяем, есть ли файл на устройстве
         if progress_callback:
             progress_callback(20)
         if self.check_upload(md5_and_length):
-            logger.info("Файл уже на устройстве: %s", md5_and_length)
+            logger.info("File already present on player: %s", md5_and_length)
             if progress_callback:
                 progress_callback(100)
             return md5_and_length
 
-        # Шаг 3: Загружаем файл (multipart POST)
         if progress_callback:
             progress_callback(30)
 
         endpoint = f"uploadMedia/{media_type}/{md5_and_length}"
         url = f"{self.base_url}/{endpoint}"
+        logger.info("Uploading media: %s → %s", path.name, url)
 
-        logger.info("Загрузка файла: %s → %s", path.name, url)
-
-        # Открываем файл и отправляем как multipart/form-data
-        # Увеличиваем таймаут для больших файлов
         file_size = os.path.getsize(file_path)
         upload_timeout = max(self.timeout, file_size // (100 * 1024) + 30)
 
@@ -455,23 +386,22 @@ class KystarClient:
 
             if result.get("code") != 200:
                 raise KystarClientError(
-                    f"Ошибка загрузки: code={result.get('code')}, "
-                    f"message={result.get('message')}"
+                    f"Upload failed: code={result.get('code')}, message={result.get('message')}"
                 )
 
-            logger.info("Файл успешно загружен: %s", md5_and_length)
+            logger.info("File upload succeeded: %s", md5_and_length)
             if progress_callback:
                 progress_callback(100)
             return md5_and_length
 
         except requests.exceptions.RequestException as e:
-            raise KystarClientError(f"Ошибка при загрузке файла: {e}") from e
+            raise KystarClientError(f"Upload error: {e}") from e
 
     def stop_playback(self) -> bool:
         """
-        Останавливает текущее воспроизведение.
-        Использует вызов playText с пустым текстом, который по документации 
-        автоматически отменяет текущую программу (что освобождает медиафайлы).
+        Halts active playback on the display.
+        Uses playText with empty text which, per Kystar SDK, automatically
+        cancels active program playback and releases file handles.
         """
         try:
             params = {
@@ -480,14 +410,14 @@ class KystarClient:
                 "height": screen_config.total_height,
                 "scrollSpeed": 1,
                 "color": -1,
-                "backgroundColor": 0, # 0 = прозрачный
+                "backgroundColor": 0,
                 "fontSize": 10
             }
-            logger.info("Остановка воспроизведения (через playText)")
+            logger.info("Stopping playback (via playText flush)")
             result = self._post("playText", params=params)
             return result.get("code") == 200
         except Exception as e:
-            logger.warning(f"Не удалось остановить воспроизведение: {e}")
+            logger.warning(f"Failed to stop playback: {e}")
             return False
 
     def upload_third_program(
@@ -496,24 +426,16 @@ class KystarClient:
         program_name: str = "PyQt6 Program",
     ) -> dict[str, Any]:
         """
-        Создаёт и немедленно запускает программу с медиа-контентом.
-
-        Эндпоинт: POST /uploadThirdProgram
-
-        Формирует JSON-программу со списком медиафайлов и отправляет
-        на устройство. После успешной загрузки контент сразу воспроизводится.
+        Creates and immediately launches a broadcast program with media items.
+        Endpoint: POST /uploadThirdProgram
 
         Args:
-            media_items: Список медиа. Каждый элемент — словарь с ключами:
-                - md5AndLength (str): Идентификатор файла.
-                - duration (int): Длительность показа в мс.
-                - anim (str, optional): Спецэффект перехода.
-            program_name: Имя программы для отображения на устройстве.
-
-        Returns:
-            Ответ API (code: 200 при успехе).
+            media_items: List of dictionaries with keys:
+                - md5AndLength (str)
+                - duration (int, ms)
+                - anim (str, optional)
+            program_name: Program label.
         """
-        # Формируем JSON-программу по спецификации Kystar
         program_data = {
             "name": program_name,
             "width": screen_config.total_width,
@@ -522,7 +444,7 @@ class KystarClient:
         }
 
         logger.info(
-            "Отправка программы '%s' с %d медиа-элементами",
+            "Deploying program '%s' with %d media elements",
             program_name,
             len(media_items),
         )
@@ -536,16 +458,7 @@ class KystarClient:
         progress_callback: Callable[[int], None] | None = None,
     ) -> dict[str, Any]:
         """
-        Оркестрирует полный процесс публикации медиа.
-
-        Args:
-            program_name: Имя программы для отображения на устройстве.
-            file_paths: Список путей к локальным медиафайлам.
-            image_duration_sec: Длительность показа каждого изображения (в секундах).
-            progress_callback: Опциональный callable(percent: int).
-
-        Returns:
-            Ответ API от uploadThirdProgram.
+        Orchestrates complete media upload and playback sequence.
         """
         media_list: list[dict[str, Any]] = []
         total_files = len(file_paths)
@@ -556,26 +469,21 @@ class KystarClient:
             media_type = get_media_type(extension)
 
             if media_type is None:
-                logger.warning("Пропуск файла с неизвестным типом: %s", file_path)
+                logger.warning("Skipping unsupported media file: %s", file_path)
                 continue
 
-            # Прогресс: равномерно распределяем 0-80% на загрузку файлов
             base_progress = int((idx / total_files) * 80)
 
             def file_progress(p: int, _base: int = base_progress) -> None:
                 if progress_callback:
-                    # Преобразуем прогресс файла (0-100) в общий прогресс
                     overall = _base + int((p / 100) * (80 / total_files))
                     progress_callback(min(overall, 80))
 
-            # Загружаем файл на устройство
             md5_and_length = self.upload_media(file_path, progress_callback=file_progress)
 
-            # Определяем длительность показа
             if media_type == MEDIA_TYPE_IMAGE:
                 duration = image_duration_sec * 1000
             else:
-                # Для видео ставим 0 — плеер сам определит длительность
                 duration = 0
 
             media_list.append({
@@ -585,9 +493,8 @@ class KystarClient:
             })
 
         if not media_list:
-            raise KystarClientError("Нет подходящих медиафайлов для воспроизведения")
+            raise KystarClientError("No valid media files found for playback")
 
-        # Отправляем программу на воспроизведение
         if progress_callback:
             progress_callback(85)
 
@@ -600,15 +507,10 @@ class KystarClient:
 
     def set_input_source(self, source_type: int, width: int = 1920, height: int = 1080) -> bool:
         """
-        Переключает источник видеосигнала (HDMI / Android).
+        Switches video input feed (HDMI vs. Internal Android player).
         
         Args:
-            source_type: 2 (Android/Внутренний плеер), 3 (HDMI/Внешний кабель).
-            width: Ширина области (экрана)
-            height: Высота области (экрана)
-            
-        Returns:
-            bool: True при успехе, False при ошибке
+            source_type: 2 (Android/Internal Media Player), 3 (HDMI/External input).
         """
         try:
             params = {
@@ -624,48 +526,30 @@ class KystarClient:
             
             data = resp.json()
             if data.get("code") == 200:
-                logger.info("Источник сигнала успешно переключен на: %s", source_type)
+                logger.info("Signal source switched to: %s", source_type)
                 return True
                 
-            logger.error("Ошибка при переключении источника: %s", data.get("message"))
+            logger.error("Signal switch failed: %s", data.get("message"))
             return False
             
         except requests.exceptions.RequestException as e:
-            logger.error("Сетевая ошибка при переключении источника: %s", e)
+            logger.error("Network error during signal source switch: %s", e)
             return False
 
     # ================================================================
-    # ОКНА (WINDOWS)
+    # WINDOWS & LAYOUTS
     # ================================================================
 
     def set_windows(self, windows: list[dict[str, int]]) -> dict[str, Any]:
         """
-        Создаёт или модифицирует список окон на экране.
-
-
-        Эндпоинт: POST /setWindows
-
-        Args:
-            windows: Список окон. Каждое окно — словарь:
-                - index (int): Порядковый номер окна (начиная с 0).
-                - x (int): Горизонтальная позиция в пикселях.
-                - y (int): Вертикальная позиция в пикселях.
-                - w (int): Ширина окна в пикселях.
-                - h (int): Высота окна в пикселях.
-
-        Returns:
-            Ответ API.
+        Configures display windows layout.
+        Endpoint: POST /setWindows
         """
         return self._post("setWindows", json_data=windows)
 
     def set_fullscreen_window(self) -> dict[str, Any]:
         """
-        Устанавливает одно полноэкранное окно на весь экран.
-
-        Размеры окна автоматически берутся из screen_config.
-
-        Returns:
-            Ответ API.
+        Configures a single fullscreen window matching canvas dimensions.
         """
         windows = [{
             "index": 0,
@@ -678,38 +562,27 @@ class KystarClient:
 
     def get_card_info(self) -> dict[str, Any]:
         """
-        Получает информацию о картах отправки и приёма.
-
-        Эндпоинт: GET /getCardInfo
-
-        Используется для мониторинга: количество приёмных карт (rxNum)
-        и их версии позволяют определить, все ли модули подключены.
-
-        Returns:
-            Словарь с полями: rxNum (int), rxCardList (list), txCard (dict).
+        Retrieves transmitting and receiving card hardware diagnostics.
+        Endpoint: GET /getCardInfo
         """
         result = self._get("getCardInfo")
         return result.get("data", result)
 
     def get_current_windows(self) -> dict[str, Any]:
         """
-        Получает текущую конфигурацию окон.
-
-        Эндпоинт: GET /curWindows
-
-        Returns:
-            Ответ API с массивом окон в поле data.
+        Retrieves active window configuration from device.
+        Endpoint: GET /curWindows
         """
         return self._get("curWindows")
 
     def start_live_stream(self, stream_url: str) -> dict[str, Any]:
         """
-        Запускает воспроизведение живого потока (RTSP/RTMP/UDP) на контроллере.
+        Initiates live stream playback (RTSP/RTMP/UDP) on the controller.
         """
         return self._get("starLive", params={"url": stream_url})
 
     def stop_live_stream(self) -> dict[str, Any]:
         """
-        Останавливает воспроизведение живого потока на контроллере.
+        Stops live streaming on the controller.
         """
         return self._get("stopLive")

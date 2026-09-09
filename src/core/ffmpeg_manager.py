@@ -1,21 +1,22 @@
+from __future__ import annotations
 """
-Управление загрузкой и поиском видеодвижка FFmpeg.
+ffmpeg_manager.py — Management, detection, and retrieval of FFmpeg video engine binaries.
 """
 import os
 import shutil
 from pathlib import Path
 
-# Локальная директория для хранения FFmpeg
+# Local directory for bundled FFmpeg binaries
 LOCAL_TOOLS_DIR = Path("tools/ffmpeg/bin")
 
 def get_ffmpeg_path() -> str:
-    """Возвращает путь к ffmpeg, если он найден локально или в PATH. Иначе возвращает 'ffmpeg'."""
-    # 1. Проверяем локальную директорию (имеет приоритет, если мы сами скачали)
-    local_ffmpeg = LOCAL_TOOLS_DIR / "ffmpeg.exe"
+    """Returns path to ffmpeg binary if found locally or in system PATH. Otherwise returns 'ffmpeg'."""
+    # 1. Check local directory (priority if downloaded via app)
+    local_ffmpeg = LOCAL_TOOLS_DIR / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
     if local_ffmpeg.exists():
         return str(local_ffmpeg.resolve())
     
-    # 2. Проверяем системный PATH
+    # 2. Check system PATH
     system_ffmpeg = shutil.which("ffmpeg")
     if system_ffmpeg:
         return system_ffmpeg
@@ -23,8 +24,8 @@ def get_ffmpeg_path() -> str:
     return "ffmpeg"
 
 def get_ffprobe_path() -> str:
-    """Возвращает путь к ffprobe, аналогично get_ffmpeg_path()."""
-    local_ffprobe = LOCAL_TOOLS_DIR / "ffprobe.exe"
+    """Returns path to ffprobe binary if found locally or in system PATH. Otherwise returns 'ffprobe'."""
+    local_ffprobe = LOCAL_TOOLS_DIR / ("ffprobe.exe" if os.name == "nt" else "ffprobe")
     if local_ffprobe.exists():
         return str(local_ffprobe.resolve())
         
@@ -35,13 +36,10 @@ def get_ffprobe_path() -> str:
     return "ffprobe"
 
 def is_ffmpeg_available() -> bool:
-    """Проверяет доступность ffmpeg в системе или локально."""
-    # Если get_ffmpeg_path() вернул валидный путь с существующим файлом
+    """Checks whether FFmpeg is available locally or in system PATH."""
     path = get_ffmpeg_path()
-    
-    # shutil.which возвращает None если не найдено, а get_ffmpeg_path может вернуть 'ffmpeg'
     if path == "ffmpeg":
-        # Если returned string is exactly 'ffmpeg', it means it wasn't found in PATH and local file doesn't exist
+        # If returned string is default 'ffmpeg', it means not found in PATH or local directory
         return False
         
     return Path(path).exists()

@@ -1,25 +1,29 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-workers.py — Рабочие потоки (QThread) для асинхронных сетевых операций.
+workers.py — Worker threads (QThread) for asynchronous network operations.
 
-Все сетевые вызовы к устройству Kystar KD6 выполняются в этих потоках,
-чтобы основной UI-поток PyQt6 никогда не блокировался.
+All network calls to the Kystar KD6 device are executed in these threads
+so that the main PyQt6 UI thread is never blocked.
 
-Архитектура потоков PyQt6:
+PyQt6 Thread Architecture:
 ─────────────────────────
-Основной поток (Main Thread) → отвечает ТОЛЬКО за отрисовку UI.
-Рабочие потоки (QThread)     → выполняют HTTP-запросы через KystarClient.
+Main Thread   → Responsible ONLY for rendering the UI.
+Worker Threads (QThread) → Execute HTTP requests via KystarClient.
 
-Взаимодействие потоков происходит через механизм сигналов/слотов PyQt6:
-- Worker эмитит сигнал (например, finished) из рабочего потока.
-- Слот в MainWindow получает сигнал и обновляет UI из основного потока.
-- Это потокобезопасно благодаря очереди событий Qt (Queued Connection).
+Thread communication occurs via PyQt6 signals and slots:
+- Worker emits a signal (e.g., finished) from the worker thread.
+- Slot in MainWindow receives the signal and updates the UI from the main thread.
+- This is thread-safe thanks to Qt's event loop (Queued Connection).
 """
 
 import logging
 import os
+import shutil
+import subprocess
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter
 
 from src.core import config
 from src.core.ffmpeg_renderer import FFmpegRenderer
@@ -30,15 +34,16 @@ logger = logging.getLogger(__name__)
 
 class PingWorker(QThread):
     """
-    Фоновый поток для периодической проверки доступности устройства.
+    Background worker thread for periodic device availability checks.
 
-    Каждые N миллисекунд (задаётся через config.PING_INTERVAL_MS)
-    отправляет GET /device с коротким таймаутом и эмитит сигнал
-    с результатом (True/False) для обновления индикатора статуса.
+    Sends GET /device with a short timeout every N milliseconds
+    (defined by config.PING_INTERVAL_MS) and emits a signal with
+    the result (True/False) to update the status indicator.
 
     Signals:
-        status_changed(bool): True если устройство онлайн, False если нет.
-        grid_updated(): Эмитится, когда конфигурация сетки изменилась.
+        status_changed(bool): True if device is online, False otherwise.
+        grid_updated(): Emitted when the grid configuration changes.
+        brightness_received(int): Emitted with current brightness value on first ping.
     """
 
     status_changed = pyqtSignal(bool)
@@ -54,30 +59,30 @@ class PingWorker(QThread):
 
     def run(self) -> None:
         """
-        Основной цикл потока пинга.
+        Main ping worker loop.
 
-        Использует QThread.msleep() вместо time.sleep() для корректной
-        обработки прерывания потока при закрытии приложения.
+        Uses QThread.msleep() instead of time.sleep() for responsive
+        thread interruption when closing the application.
         """
         while self._running:
             try:
-                # 1. Пинг (быстрая проверка)
+                # 1. Ping (fast check)
                 is_online = self.client.ping()
                 self.status_changed.emit(is_online)
 
-                # 2. Получение данных о холсте (если онлайн)
+                # 2. Retrieve canvas info if online
                 if is_online:
                     device_info = self.client.get_device_info()
                     screen_width = device_info.get("screenWidth", 0)
                     screen_height = device_info.get("screenHeight", 0)
-                    
-                    # Получаем rxNum (активные карты) для умного расчета
+
+                    # Retrieve rxNum (active receiving cards) for smart calculation
                     try:
                         card_info = self.client.get_card_info()
                         rx_num = card_info.get("rxNum", 0)
                     except Exception:
                         rx_num = 0
-                    
+
                     from src.core.config import screen_config
                     if screen_config.update_from_device_info(screen_width, screen_height, rx_num):
                         self.grid_updated.emit()
@@ -89,33 +94,33 @@ class PingWorker(QThread):
                                 self.brightness_received.emit(int(screen_params["bright"]))
                             self._first_ping_done = True
                         except Exception as e:
-                            logger.debug("Ошибка получения brightness: %s", e)
+                            logger.debug("Error retrieving brightness: %s", e)
 
             except Exception as e:
-                logger.debug("Ошибка пинга/статуса: %s", e)
+                logger.debug("Ping/status check error: %s", e)
                 self.status_changed.emit(False)
 
-            # Спим между проверками (прерываемый сон)
+            # Interruptible sleep between checks
             self.msleep(self.interval_ms)
 
     def stop(self) -> None:
-        """Останавливает цикл пинга и ожидает завершения потока."""
+        """Stops the ping loop and waits for thread completion."""
         self._running = False
-        self.wait(3000)  # Ждём завершения максимум 3 секунды
+        self.wait(3000)
 
 
 class UploadMediaWorker(QThread):
     """
-    Поток для двухэтапной загрузки медиафайлов и запуска программы.
+    Worker thread for two-stage media upload and program execution.
 
-    Полный цикл:
-    1. Для каждого файла: MD5 → checkUpload → uploadMedia (если нужно).
-    2. Формирование mediaList.
-    3. Отправка uploadThirdProgram.
+    Full cycle:
+    1. For each file: MD5 -> checkUpload -> uploadMedia (if needed).
+    2. Build mediaList.
+    3. Send uploadThirdProgram.
 
     Signals:
-        progress(int): Прогресс загрузки в процентах (0-100).
-        finished(bool, str): (успех, сообщение).
+        progress(int): Upload progress percentage (0-100).
+        finished(bool, str): (success, message).
     """
 
     progress = pyqtSignal(int)
@@ -130,31 +135,30 @@ class UploadMediaWorker(QThread):
 
     def run(self) -> None:
         """
-        Загружает файлы и запускает программу.
+        Uploads files and starts playback.
 
-        Прогресс-callback передаётся в KystarClient.play_media_files(),
-        который вызывает его из этого же рабочего потока. Сигнал progress
-        затем доставляется в основной поток через Qt Event Loop.
+        Progress callback is forwarded to KystarClient.play_media_files(),
+        which invokes it from this worker thread. The progress signal is
+        delivered to the main thread via the Qt Event Loop.
         """
         try:
-            # Устанавливаем полноэкранное окно перед запуском
+            # Set fullscreen window before start
             try:
                 if not self._is_aborted:
                     self.client.set_fullscreen_window()
             except Exception as e:
-                logger.warning(f"Не удалось инициализировать полноэкранное окно: {e}")
+                logger.warning(f"Failed to initialize fullscreen window: {e}")
 
             if self._is_aborted:
-                self.finished.emit(False, "Загрузка отменена")
+                self.finished.emit(False, "Upload cancelled")
                 return
 
             def progress_callback(p):
                 if self._is_aborted:
-                    # Принудительно кидаем ошибку чтобы прервать KystarClient
                     raise KystarClientError("Upload aborted by user")
                 self.progress.emit(p)
 
-            # ОПЦИОНАЛЬНАЯ АВТО-ОПТИМИЗАЦИЯ ВИДЕО
+            # Optional video auto-optimization
             final_file_paths = []
             if config.AUTO_OPTIMIZE_VIDEO:
                 from src.core.config import VIDEO_EXTENSIONS
@@ -164,12 +168,12 @@ class UploadMediaWorker(QThread):
                         raise KystarClientError("Upload aborted by user")
                     ext = os.path.splitext(path)[1].lower()
                     if ext in VIDEO_EXTENSIONS:
-                        self.progress.emit(int((i / len(self.file_paths)) * 10)) # Небольшой прогресс
+                        self.progress.emit(int((i / len(self.file_paths)) * 10))
                         opt_path = renderer.optimize_single_video(path)
                         if opt_path:
                             final_file_paths.append(opt_path)
                         else:
-                            final_file_paths.append(path) # фолбэк на оригинал
+                            final_file_paths.append(path)
                     else:
                         final_file_paths.append(path)
             else:
@@ -183,29 +187,29 @@ class UploadMediaWorker(QThread):
             if result.get("code") == 200:
                 self.finished.emit(
                     True,
-                    f"Программа запущена ({len(self.file_paths)} файлов)",
+                    f"Program launched ({len(self.file_paths)} files)",
                 )
             else:
                 self.finished.emit(
                     False,
-                    f"Ошибка запуска: {result.get('message', 'Неизвестная ошибка')}",
+                    f"Launch error: {result.get('message', 'Unknown error')}",
                 )
         except Exception as e:
             if self._is_aborted or "Upload aborted" in str(e) or "Pool is closed" in str(e) or "aborted" in str(e):
-                self.finished.emit(False, "Загрузка отменена")
+                self.finished.emit(False, "Upload cancelled")
             else:
-                self.finished.emit(False, f"Ошибка: {e}")
+                self.finished.emit(False, f"Error: {e}")
 
 
 class BrightnessWorker(QThread):
     """
-    Поток для отправки значения яркости на устройство.
+    Worker thread to send brightness level to device.
 
-    Используется с debounce-таймером: отправляется только последнее
-    значение после паузы пользователя (BRIGHTNESS_DEBOUNCE_MS).
+    Used with debounce timer: sends only the latest value
+    after user stops adjusting (BRIGHTNESS_DEBOUNCE_MS).
 
     Signals:
-        finished(bool, str): (успех, сообщение).
+        finished(bool, str): (success, message).
     """
 
     finished = pyqtSignal(bool, str)
@@ -216,28 +220,28 @@ class BrightnessWorker(QThread):
         self.value = value
 
     def run(self) -> None:
-        """Отправляет яркость и эмитит результат."""
+        """Sends brightness value and emits result."""
         try:
             result = self.client.set_brightness(self.value)
             if result.get("code") == 200:
-                self.finished.emit(True, f"Яркость: {self.value}%")
+                self.finished.emit(True, f"Brightness: {self.value}%")
             else:
                 self.finished.emit(
                     False,
-                    f"Ошибка: {result.get('message', 'Неизвестная ошибка')}",
+                    f"Error: {result.get('message', 'Unknown error')}",
                 )
         except KystarClientError as e:
-            self.finished.emit(False, f"Ошибка: {e}")
+            self.finished.emit(False, f"Error: {e}")
         except Exception as e:
-            self.finished.emit(False, f"Ошибка: {e}")
+            self.finished.emit(False, f"Error: {e}")
 
 
 class ScreenPowerWorker(QThread):
     """
-    Поток для включения/выключения экрана.
+    Worker thread to toggle screen power on/off.
 
     Signals:
-        finished(bool, str): (успех, сообщение).
+        finished(bool, str): (success, message).
     """
 
     finished = pyqtSignal(bool, str)
@@ -248,29 +252,29 @@ class ScreenPowerWorker(QThread):
         self.power_on = power_on
 
     def run(self) -> None:
-        """Переключает состояние экрана и эмитит результат."""
+        """Toggles screen state and emits result."""
         try:
             result = self.client.set_screen_power(self.power_on)
-            state_text = "включён" if self.power_on else "выключен"
+            state_text = "ON" if self.power_on else "OFF"
             if result.get("code") == 200:
-                self.finished.emit(True, f"Экран {state_text}")
+                self.finished.emit(True, f"Screen power: {state_text}")
             else:
                 self.finished.emit(
                     False,
-                    f"Ошибка: {result.get('message', 'Неизвестная ошибка')}",
+                    f"Error: {result.get('message', 'Unknown error')}",
                 )
         except KystarClientError as e:
-            self.finished.emit(False, f"Ошибка: {e}")
+            self.finished.emit(False, f"Error: {e}")
         except Exception as e:
-            self.finished.emit(False, f"Ошибка: {e}")
+            self.finished.emit(False, f"Error: {e}")
 
 
 class RebootWorker(QThread):
     """
-    Поток для перезагрузки устройства.
+    Worker thread to reboot the device.
 
     Signals:
-        finished(bool, str): (успех, сообщение).
+        finished(bool, str): (success, message).
     """
 
     finished = pyqtSignal(bool, str)
@@ -280,76 +284,76 @@ class RebootWorker(QThread):
         self.client = client
 
     def run(self) -> None:
-        """Отправляет команду перезагрузки и эмитит результат."""
+        """Sends reboot command and emits result."""
         try:
             result = self.client.reboot()
             if result.get("code") == 200:
-                self.finished.emit(True, "Устройство перезагружается...")
+                self.finished.emit(True, "Device is rebooting...")
             else:
                 self.finished.emit(
                     False,
-                    f"Ошибка: {result.get('message', 'Неизвестная ошибка')}",
+                    f"Error: {result.get('message', 'Unknown error')}",
                 )
         except KystarClientError as e:
-            self.finished.emit(False, f"Ошибка: {e}")
+            self.finished.emit(False, f"Error: {e}")
         except Exception as e:
-            self.finished.emit(False, f"Ошибка: {e}")
+            self.finished.emit(False, f"Error: {e}")
 
 
 class ClearMemoryWorker(QThread):
     """
-    Фоновый поток для очистки памяти устройства.
-    
-    Получает список всех медиафайлов на устройстве и удаляет их по одному.
+    Background worker thread to clear device media storage.
+
+    Retrieves all media files on device and deletes them one by one.
     """
     progress = pyqtSignal(int)
     finished = pyqtSignal(bool, str)
-    
+
     def __init__(self, client: KystarClient) -> None:
         super().__init__()
         self.client = client
-        
+
     def run(self) -> None:
         try:
             self.progress.emit(10)
             medias = self.client.get_all_media()
             if not medias:
                 self.progress.emit(100)
-                self.finished.emit(True, "Память плеера уже пуста")
+                self.finished.emit(True, "Player memory is already empty")
                 return
-                
+
             total = len(medias)
             deleted = 0
             playback_stopped = False
-            
+
             for i, media in enumerate(medias):
                 md5_and_length = media.get("md5AndLength")
                 if md5_and_length:
                     success, msg = self.client.delete_media(md5_and_length)
-                    
-                    if not success and msg == "Файл сейчас воспроизводится" and not playback_stopped:
+
+                    if not success and ("playback" in msg.lower() or "playing" in msg.lower()) and not playback_stopped:
                         self.client.stop_playback()
                         playback_stopped = True
                         success, msg = self.client.delete_media(md5_and_length)
-                        
+
                     if success:
                         deleted += 1
-                
-                # Обновляем прогресс от 10% до 100%
+
                 p = 10 + int(((i + 1) / total) * 90)
                 self.progress.emit(p)
-                
-            self.finished.emit(True, f"Удалено {deleted} файлов. Память очищена.")
-            
+
+            self.finished.emit(True, f"Deleted {deleted} files. Storage cleared.")
+
         except Exception as e:
-            logger.exception("Ошибка при очистке памяти")
-            self.finished.emit(False, f"Ошибка: {e}")
+            logger.exception("Error clearing memory")
+            self.finished.emit(False, f"Error: {e}")
+
 
 class SwitchSourceWorker(QThread):
     """
-    Фоновый поток для переключения источника сигнала (HDMI / Android).
+    Background worker thread to switch input source (HDMI / Android internal player).
     """
-    
+
     finished = pyqtSignal(bool, str)
 
     def __init__(self, client: KystarClient, source_type: int, width: int = 1920, height: int = 1080) -> None:
@@ -363,17 +367,17 @@ class SwitchSourceWorker(QThread):
         try:
             success = self.client.set_input_source(self.source_type, self.width, self.height)
             if success:
-                msg = "Успешно включена трансляция HDMI." if self.source_type == 3 else "Успешно возвращено к внутреннему плееру."
+                msg = "HDMI input broadcast activated." if self.source_type == 3 else "Switched back to internal media player."
                 self.finished.emit(True, msg)
             else:
-                self.finished.emit(False, "Ошибка переключения источника сигнала. Проверьте подключение кабеля.")
+                self.finished.emit(False, "Error switching input source. Please check cable connection.")
         except Exception as e:
-            logger.exception("Ошибка в SwitchSourceWorker:")
+            logger.exception("Error in SwitchSourceWorker:")
             self.finished.emit(False, str(e))
 
 
 class FetchMediaWorker(QThread):
-    """Поток для получения списка файлов с устройства и генерации превью."""
+    """Worker thread to fetch media list from device and generate thumbnails."""
     # bool(success), list(medias), dict(md5 -> bytes of thumbnail), str(message)
     finished = pyqtSignal(bool, list, dict, str)
 
@@ -385,22 +389,21 @@ class FetchMediaWorker(QThread):
     def run(self):
         try:
             medias = self.client.get_all_media()
-            
-            # Попытка сопоставить файлы с локальными для извлечения превью
+
+            # Attempt to match files with local files to extract thumbnails
             thumbnails_map = {}
             if self.playlists_manager:
-                import os
-                from src.core.media_utils import get_video_thumbnail_bytes, IMAGE_THUMBNAIL_EXTENSIONS, VIDEO_THUMBNAIL_EXTENSIONS
-                
+                from src.core.media_utils import IMAGE_THUMBNAIL_EXTENSIONS, VIDEO_THUMBNAIL_EXTENSIONS, get_video_thumbnail_bytes
+
                 name_to_path = {}
-                
-                # 1. Из плейлистов
+
+                # 1. From playlists
                 for prog in self.playlists_manager.get_all_programs():
                     for f in prog.get("files", []):
                         if os.path.exists(f):
                             name_to_path[os.path.basename(f)] = f
-                            
-                # 2. Из папки rendered_scenes и temp_media (сгенерированные сцены)
+
+                # 2. From rendered_scenes and temp_media folders
                 for dir_name in ["rendered_scenes", "temp_media"]:
                     if os.path.exists(dir_name):
                         try:
@@ -410,17 +413,17 @@ class FetchMediaWorker(QThread):
                                     name_to_path[fname] = fpath
                         except Exception:
                             pass
-                
-                # Для каждого медиа на плеере пытаемся найти локальный файл по имени
+
+                # Match device media by name
                 for media in medias:
                     md5 = media.get("md5AndLength")
                     name = media.get("name")
-                    
+
                     if name in name_to_path:
                         local_path = name_to_path[name]
                         ext = os.path.splitext(local_path)[1].lower()
                         thumb_bytes = None
-                        
+
                         try:
                             if ext in VIDEO_THUMBNAIL_EXTENSIONS or ext == ".gif":
                                 thumb_bytes = get_video_thumbnail_bytes(local_path, width=48, height=48)
@@ -429,17 +432,17 @@ class FetchMediaWorker(QThread):
                                     thumb_bytes = f.read()
                         except Exception:
                             pass
-                        
+
                         if thumb_bytes:
                             thumbnails_map[md5] = thumb_bytes
 
-            self.finished.emit(True, medias, thumbnails_map, "Успех")
+            self.finished.emit(True, medias, thumbnails_map, "Success")
         except Exception as e:
-            self.finished.emit(False, [], {}, f"Ошибка: {e}")
+            self.finished.emit(False, [], {}, f"Error: {e}")
 
 
 class DeleteMediaWorker(QThread):
-    """Поток для удаления выбранных файлов с устройства."""
+    """Worker thread to delete selected files from device."""
     progress = pyqtSignal(int)
     finished = pyqtSignal(bool, str)
 
@@ -452,43 +455,37 @@ class DeleteMediaWorker(QThread):
         try:
             total = len(self.md5_list)
             if total == 0:
-                self.finished.emit(True, "Нет файлов для удаления")
+                self.finished.emit(True, "No files to delete")
                 return
-                
+
             deleted = 0
             errors = []
             playback_stopped = False
-            
+
             for i, md5 in enumerate(self.md5_list):
                 success, msg = self.client.delete_media(md5)
-                
-                # Если файл занят, пробуем остановить воспроизведение один раз и повторяем
-                if not success and msg == "Файл сейчас воспроизводится" and not playback_stopped:
+
+                # If file is busy, stop playback once and retry
+                if not success and ("playback" in msg.lower() or "playing" in msg.lower()) and not playback_stopped:
                     self.client.stop_playback()
                     playback_stopped = True
-                    # Пробуем удалить снова
                     success, msg = self.client.delete_media(md5)
-                    
+
                 if success:
                     deleted += 1
                 else:
                     errors.append(msg)
                 self.progress.emit(int(((i + 1) / total) * 100))
-                
+
             if deleted == total:
-                self.finished.emit(True, f"Успешно удалено {deleted} файлов.")
+                self.finished.emit(True, f"Successfully deleted {deleted} files.")
             elif deleted > 0:
-                self.finished.emit(True, f"Удалено {deleted} из {total} файлов.\nОшибки: {', '.join(set(errors))}")
+                self.finished.emit(True, f"Deleted {deleted} of {total} files.\nErrors: {', '.join(set(errors))}")
             else:
-                self.finished.emit(False, f"Не удалось удалить файлы.\nПричина: {', '.join(set(errors))}")
+                self.finished.emit(False, f"Failed to delete files.\nReason: {', '.join(set(errors))}")
         except Exception as e:
-            self.finished.emit(False, f"Ошибка: {e}")
+            self.finished.emit(False, f"Error: {e}")
 
-
-import subprocess
-import shutil
-from PyQt6.QtGui import QImage, QPainter, QColor, QBrush
-from PyQt6.QtCore import Qt
 
 class PingPongWorker(QThread):
     progress = pyqtSignal(int)
@@ -505,50 +502,51 @@ class PingPongWorker(QThread):
             from src.core.config import screen_config
             width = screen_config.total_width
             height = screen_config.total_height
-            
-            # Генерация кадров
+
+            # Frame generation
             temp_dir = os.path.join("temp_media", "ping_pong_frames")
             os.makedirs(temp_dir, exist_ok=True)
-            
-            # Очистка старых кадров
+
+            # Clear old frames
             for f in os.listdir(temp_dir):
                 os.remove(os.path.join(temp_dir, f))
-                
+
             self.progress.emit(10)
-            
+
             fps = 30
-            duration = 30  # 30 секунд для ожидания удара в угол
+            duration = 30  # 30 seconds to hit the corner
             frames = fps * duration
-            
+
             r = min(width, height) * 0.08
-            if r < 2: r = 2
-            
-            # Идеальный цикл для DVD-отскока (ровно в угол)
+            if r < 2:
+                r = 2
+
+            # DVD bounce loop hitting corner on the final frame
             r_log = r * 0.2
             A_x = width - 2 * r_log
             A_y = height - 2 * r_log
-            
+
             cycles_x = 7
             cycles_y = 11
-            
+
             img = QImage(width, height, QImage.Format.Format_RGB32)
-            
+
             for i in range(frames):
-                if self._is_aborted: return
-                
-                # Сдвиг на 1 кадр, чтобы удар в угол был ровно на последнем кадре видео
+                if self._is_aborted:
+                    return
+
                 t = (i + 1) / frames
-                
+
                 dist_x = t * (cycles_x * 2 * A_x)
                 dist_y = t * (cycles_y * 2 * A_y)
-                
+
                 pos_x = dist_x % (2 * A_x)
                 x = r_log + pos_x if pos_x < A_x else r_log + 2 * A_x - pos_x
-                
+
                 pos_y = dist_y % (2 * A_y)
                 y = r_log + pos_y if pos_y < A_y else r_log + 2 * A_y - pos_y
-                
-                # Эффект резинового вжатия
+
+                # Rubber squash/stretch effect
                 factor_x = 1.0
                 if x < r:
                     factor_x = 0.5 + 0.5 * (x - r_log) / (r - r_log)
@@ -568,13 +566,17 @@ class PingPongWorker(QThread):
                 draw_h = 2 * r * factor_y * expand_y
 
                 cx = x
-                if cx - draw_w / 2 < 0: cx = draw_w / 2
-                elif cx + draw_w / 2 > width: cx = width - draw_w / 2
-                
+                if cx - draw_w / 2 < 0:
+                    cx = draw_w / 2
+                elif cx + draw_w / 2 > width:
+                    cx = width - draw_w / 2
+
                 cy = y
-                if cy - draw_h / 2 < 0: cy = draw_h / 2
-                elif cy + draw_h / 2 > height: cy = height - draw_h / 2
-                
+                if cy - draw_h / 2 < 0:
+                    cy = draw_h / 2
+                elif cy + draw_h / 2 > height:
+                    cy = height - draw_h / 2
+
                 img.fill(QColor("black"))
                 painter = QPainter(img)
                 painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -582,21 +584,21 @@ class PingPongWorker(QThread):
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.drawEllipse(int(cx - draw_w / 2), int(cy - draw_h / 2), int(draw_w), int(draw_h))
                 painter.end()
-                
+
                 img.save(os.path.join(temp_dir, f"frame_{i:04d}.png"))
-                
+
                 if i % 30 == 0:
-                    self.progress.emit(10 + int((i / frames) * 40)) # 10 to 50%
-            
+                    self.progress.emit(10 + int((i / frames) * 40))
+
             self.progress.emit(50)
-            
+
             out_file = os.path.join("temp_media", "ping_pong.mp4")
             if os.path.exists(out_file):
                 os.remove(out_file)
-                
+
             self.progress.emit(60)
-            
-            # Сборка видео через FFmpeg
+
+            # Assemble video via FFmpeg
             ffmpeg_path = os.environ.get("FFMPEG_PATH", "ffmpeg")
             cmd = [
                 ffmpeg_path, "-y",
@@ -607,16 +609,17 @@ class PingPongWorker(QThread):
                 "-crf", "18",
                 out_file
             ]
-            
+
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             self.progress.emit(80)
-            
-            if self._is_aborted: return
-            
-            # Отправка на плеер
+
+            if self._is_aborted:
+                return
+
+            # Deploy to player
             def upload_prog(pct):
-                self.progress.emit(80 + int(pct * 0.2)) # 80 to 100%
-                
+                self.progress.emit(80 + int(pct * 0.2))
+
             md5_len = self.client.upload_media(out_file, progress_callback=upload_prog)
             media_item = {
                 "md5AndLength": md5_len,
@@ -624,14 +627,14 @@ class PingPongWorker(QThread):
                 "anim": "NONE"
             }
             res = self.client.upload_third_program([media_item], "Ping Pong")
-            
+
             if res.get("code") == 200:
-                self.finished.emit(True, "Пинг-Понг запущен!")
+                self.finished.emit(True, "Ping Pong launched successfully!")
             else:
-                self.finished.emit(False, f"Ошибка: {res.get('message', '')}")
-                
+                self.finished.emit(False, f"Error: {res.get('message', '')}")
+
         except Exception as e:
             self.finished.emit(False, str(e))
-            
+
     def abort(self):
         self._is_aborted = True

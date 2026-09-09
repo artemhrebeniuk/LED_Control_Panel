@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys
 import io
 
@@ -29,16 +30,16 @@ from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QObject, QRectF
 from PyQt6.QtGui import QFont, QPainter, QPen, QColor, QBrush, QIcon
 
 # ============================================================================
-#  КАСТОМНЫЕ UDS КОМАНДЫ ДЛЯ ЭЛЕКТРОМОБИЛЕЙ (Audi E-tron и подобные)
-#  Стандартные OBD-II PIDs (01 0C, 01 0D, 01 05) НЕ работают на EV,
-#  потому что были разработаны для мониторинга выбросов ДВС.
-#  Для EV нужно использовать UDS Service 0x22 (Read Data By Identifier)
-#  с проприетарными Data Identifiers (DID) производителя.
+#  CUSTOM UDS COMMANDS FOR ELECTRIC VEHICLES (Audi E-tron and similar)
+#  Standard OBD-II PIDs (01 0C, 01 0D, 01 05) DO NOT work on EVs,
+#  because they were designed for ICE emissions diagnostics.
+#  For EVs, UDS Service 0x22 (Read Data By Identifier) must be used
+#  with manufacturer proprietary Data Identifiers (DID).
 # ============================================================================
 
 def _decode_ev_soc(messages):
-    """Декодер: SOC батареи (%). DID 0x028C → ответ 62 02 8C [byte]
-    Формула: byte * 100 / 255 (процент 0-100)"""
+    """Decoder: Battery SOC (%). DID 0x028C -> response 62 02 8C [byte]
+    Formula: byte * 100 / 255 (percentage 0-100)"""
     try:
         d = messages[0].data
         if len(d) >= 4:  # 62 02 8C XX
@@ -49,8 +50,8 @@ def _decode_ev_soc(messages):
     return None
 
 def _decode_ev_speed(messages):
-    """Декодер: Скорость (km/h). DID 0x0281 → ответ 62 02 81 [A] [B]
-    Формула: (A*256+B) / 100"""
+    """Decoder: Speed (km/h). DID 0x0281 -> response 62 02 81 [A] [B]
+    Formula: (A*256+B) / 100"""
     try:
         d = messages[0].data
         if len(d) >= 5:  # 62 02 81 AA BB
@@ -60,8 +61,8 @@ def _decode_ev_speed(messages):
     return None
 
 def _decode_ev_hv_voltage(messages):
-    """Декодер: Напряжение HV батареи (V). DID 0x0289 → ответ 62 02 89 [A] [B]
-    Формула: (A*256+B) / 4"""
+    """Decoder: HV Battery Voltage (V). DID 0x0289 -> response 62 02 89 [A] [B]
+    Formula: (A*256+B) / 4"""
     try:
         d = messages[0].data
         if len(d) >= 5:  # 62 02 89 AA BB
@@ -71,8 +72,8 @@ def _decode_ev_hv_voltage(messages):
     return None
 
 def _decode_ev_battery_temp(messages):
-    """Декодер: Температура батареи (°C). DID 0x028B → ответ 62 02 8B [byte]
-    Формула: byte - 40"""
+    """Decoder: Battery Temperature (°C). DID 0x028B -> response 62 02 8B [byte]
+    Formula: byte - 40"""
     try:
         d = messages[0].data
         if len(d) >= 4:  # 62 02 8B XX
@@ -82,16 +83,16 @@ def _decode_ev_battery_temp(messages):
     return None
 
 def _decode_raw_passthrough(messages):
-    """Универсальный декодер — возвращает сырые байты ответа для отладки"""
+    """Universal decoder — returns raw response bytes for debugging"""
     try:
         d = messages[0].data
         return d
     except Exception:
         return None
 
-# --- Определяем кастомные OBD команды для Audi E-tron ---
-# header=b"7E0" адресует основной ЭБУ (Engine/Powertrain ECU)
-# Для BMS может потребоваться другой header (7E4, 7E5 и т.д.)
+# --- Custom OBD commands for Audi E-tron ---
+# header=b"7E0" addresses primary ECU (Engine/Powertrain ECU)
+# BMS may require an alternative header (7E4, 7E5, etc.)
 
 CMD_EV_SOC = OBDCommand(
     "EV_SOC", "EV Battery SOC %",
@@ -113,20 +114,20 @@ CMD_EV_BATTERY_TEMP = OBDCommand(
     b"22028B", 5, _decode_ev_battery_temp, ECU.ALL, False, header=b"7E0"
 )
 
-# Списки команд для пробования с разными headers (7E0, 7E4, 7E5, 7DF) + Приборная панель (714, 720)
-# Если один header не работает — пробуем следующий
+# Command lists to test across headers (7E0, 7E4, 7E5, 7DF) + Instrument Cluster (714, 720)
+# If one header fails, try the next
 EV_HEADERS_TO_TRY = [b"7E0", b"7E4", b"7DF", b"7E5", b"714", b"720"]
 
-# Список альтернативных DID для скорости (разные производители используют разные)
+# List of alternative DIDs for vehicle speed
 SPEED_DIDS_TO_TRY = [
-    (b"22F40D", "UDS-mapped standard speed (F40D)"),   # UDS-эквивалент стандартного PID 0x0D
-    (b"220281", "Audi proprietary speed (0281)"),       # Проприетарный Audi
-    (b"010D",   "Standard OBD-II speed"),               # Стандартный OBD на случай если поддержан
+    (b"22F40D", "UDS-mapped standard speed (F40D)"),   # UDS equivalent of standard PID 0x0D
+    (b"220281", "Audi proprietary speed (0281)"),       # Proprietary Audi DID
+    (b"010D",   "Standard OBD-II speed"),               # Standard OBD-II in case supported
 ]
 
 SOC_DIDS_TO_TRY = [
     (b"22028C", "Audi BMS SOC (028C)"),
-    (b"22F45B", "UDS-mapped hybrid battery (F45B)"),  # UDS-эквивалент стандартного PID 0x5B
+    (b"22F45B", "UDS-mapped hybrid battery (F45B)"),  # UDS equivalent of standard PID 0x5B
     (b"015B",   "Standard OBD-II hybrid battery"),
 ]
 
@@ -202,7 +203,7 @@ class CircularGauge(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         side = min(self.width(), self.height())
-        padding = 30 # Больше отступ, чтобы свечение не обрезалось краями виджета
+        padding = 30 # Increased padding to prevent widget edge clipping on glow effect
         rect = QRectF(self.width()/2 - side/2 + padding, 
                       self.height()/2 - side/2 + padding, 
                       side - padding*2, side - padding*2)
@@ -217,7 +218,7 @@ class CircularGauge(QWidget):
 
         arc_width = max(10, int(side * 0.04))
 
-        # --- ЗАСЕЧКИ (Tick Marks) ---
+        # --- Tick Marks ---
         painter.save()
         painter.translate(self.width()/2, self.height()/2)
         radius = side/2 - padding + arc_width + 4
@@ -251,14 +252,14 @@ class CircularGauge(QWidget):
                 painter.setPen(pen_glow)
                 painter.drawArc(rect, start_angle, current_extent)
 
-        # --- ФОНОВАЯ ДУГА ---
+        # --- Background Arc ---
         pen_bg = QPen(QColor("#222533"))
         pen_bg.setWidth(arc_width)
         pen_bg.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen_bg)
         painter.drawArc(rect, start_angle, extent_angle)
 
-        # --- АКТИВНАЯ ДУГА ---
+        # --- Active Arc ---
         if current_extent != 0:
             pen_fg = QPen(self.gauge_color)
             pen_fg.setWidth(arc_width)
@@ -384,7 +385,7 @@ class OBDDashboardQT(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # --- ЛЕВАЯ ПАНЕЛЬ ---
+        # --- Left Sidebar Panel ---
         sidebar = QFrame(self)
         sidebar.setObjectName("Sidebar")
         sidebar.setFixedWidth(280)
@@ -550,14 +551,14 @@ class OBDDashboardQT(QMainWindow):
         sidebar_layout.addStretch()
         main_layout.addWidget(sidebar)
 
-        # --- ПРАВАЯ ПАНЕЛЬ (Dashboard) ---
+        # --- Right Dashboard Panel ---
         dashboard = QFrame(self)
         dashboard.setObjectName("Dashboard")
         dashboard_layout = QGridLayout(dashboard)
         dashboard_layout.setContentsMargins(25, 25, 25, 25)
         dashboard_layout.setSpacing(20)
 
-        # 1. СПИДОМЕТР (Круговая шкала)
+        # 1. Speedometer (Circular Gauge)
         self.speed_card = QFrame(dashboard)
         self.speed_card.setObjectName("SpeedCard")
         speed_layout = QVBoxLayout(self.speed_card)
@@ -566,7 +567,7 @@ class OBDDashboardQT(QMainWindow):
         self.speed_gauge = CircularGauge(self.speed_card, max_value=220, color="#00d2ff")
         speed_layout.addWidget(self.speed_gauge)
 
-        # Текст внутри шкалы, чтобы он всегда был отцентрирован и не ломал размер шкалы
+        # Centered text inside gauge to maintain consistent geometry
         speed_text_layout = QVBoxLayout(self.speed_gauge)
         speed_title = QLabel("⚡ SPEED", self.speed_gauge)
         speed_title.setFont(QFont(self.font_main, 12, QFont.Weight.Bold))
@@ -590,7 +591,7 @@ class OBDDashboardQT(QMainWindow):
         
         dashboard_layout.addWidget(self.speed_card, 0, 0)
 
-        # 2. НАПРЯЖЕНИЕ HV БАТАРЕИ (Круговая шкала) — вместо RPM (на электричке нет ДВС)
+        # 2. HV Battery Voltage (Circular Gauge) — replaces RPM on EV
         self.rpm_card = QFrame(dashboard)
         self.rpm_card.setObjectName("RpmCard")
         rpm_layout = QVBoxLayout(self.rpm_card)
@@ -622,7 +623,7 @@ class OBDDashboardQT(QMainWindow):
 
         dashboard_layout.addWidget(self.rpm_card, 0, 1)
 
-        # 3. ТЕМПЕРАТУРА (Индивидуальная линейная шкала)
+        # 3. Temperature (Linear Bar Gauge)
         self.temp_card = QFrame(dashboard)
         self.temp_card.setObjectName("TempCard")
         temp_layout = QVBoxLayout(self.temp_card)
@@ -651,7 +652,7 @@ class OBDDashboardQT(QMainWindow):
 
         dashboard_layout.addWidget(self.temp_card, 1, 0)
 
-        # 4. БАТАРЕЯ (Индивидуальная линейная шкала)
+        # 4. Battery / Fuel (Linear Bar Gauge)
         self.battery_card = QFrame(dashboard)
         self.battery_card.setObjectName("BatteryCard")
         battery_layout = QVBoxLayout(self.battery_card)
@@ -680,7 +681,7 @@ class OBDDashboardQT(QMainWindow):
 
         dashboard_layout.addWidget(self.battery_card, 1, 1)
 
-        # Настройка пропорций строк сетки
+        # Configure grid row stretch factors
         dashboard_layout.setRowStretch(0, 3)
         dashboard_layout.setRowStretch(1, 2)
         dashboard_layout.setColumnStretch(0, 1)
@@ -718,7 +719,7 @@ class OBDDashboardQT(QMainWindow):
             self.temp_gauge.setValue(0)
             self.battery_gauge.setValue(0)
             self.rpm_gauge.setColor("#ffaa00")
-            # Автоматически ставим протокол CAN 11-bit 500k (Audi)
+            # Auto-select CAN 11-bit 500k protocol (Audi)
             if hasattr(self, 'proto_dropdown'):
                 self.proto_dropdown.setCurrentIndex(1)
         else:
@@ -738,7 +739,7 @@ class OBDDashboardQT(QMainWindow):
             self.temp_gauge.setValue(0)
             self.battery_gauge.setValue(0)
             self.rpm_gauge.setColor("#00fa9a")
-            # Автоматически ставим протокол Auto
+            # Auto-select Auto protocol
             if hasattr(self, 'proto_dropdown'):
                 self.proto_dropdown.setCurrentIndex(0)
 
@@ -764,7 +765,7 @@ class OBDDashboardQT(QMainWindow):
             self.port_dropdown.show()
             self.refresh_btn.show()
             self.baud_dropdown_widget.show()
-            self.baud_dropdown.setCurrentIndex(0)  # Дефолт: 9600 для Kingbolen V1.5
+            self.baud_dropdown.setCurrentIndex(0)  # Default: 9600 for Kingbolen V1.5
             self.refresh_ports()
 
     def refresh_ports(self):
@@ -776,26 +777,26 @@ class OBDDashboardQT(QMainWindow):
         
         try:
             # ---------------------------------------------------------------
-            # ВАЖНО (macOS + Bluetooth):
-            # На macOS каждый BT-порт существует в двух вариантах:
-            #   /dev/tty.X  — требует DCD сигнал → зависает с BT адаптерами!
-            #   /dev/cu.X   — открывается сразу  → ПРАВИЛЬНЫЙ для BT OBD!
-            # Поэтому везде заменяем tty.* → cu.*
+            # IMPORTANT (macOS + Bluetooth):
+            # On macOS each BT port exists in two variants:
+            #   /dev/tty.X  — requires DCD line -> hangs with BT adapters!
+            #   /dev/cu.X   — opens immediately -> CORRECT for BT OBD!
+            # Therefore replace tty.* -> cu.* everywhere
             # ---------------------------------------------------------------
             import serial.tools.list_ports
             ports_raw = [p.device for p in serial.tools.list_ports.comports()]
             ports = []
             for p in ports_raw:
-                # Фильтруем мусорные порты
+                # Filter out non-OBD ports
                 if "debug-console" in p or "Bluetooth-Incoming" in p:
                     continue
                 if sys.platform == 'darwin' and '/dev/tty.' in p:
-                    # Заменяем tty → cu (правильный BT порт на macOS)
+                    # Replace tty -> cu (valid BT port on macOS)
                     cu_port = p.replace('/dev/tty.', '/dev/cu.')
                     if os.path.exists(cu_port):
                         if cu_port not in ports:
                             ports.append(cu_port)
-                            print(f"[PORT SCAN] BT: {p} → используем {cu_port}")
+                            print(f"[PORT SCAN] BT: {p} -> using {cu_port}")
                     else:
                         if p not in ports:
                             ports.append(p)
@@ -805,16 +806,16 @@ class OBDDashboardQT(QMainWindow):
 
             if sys.platform == 'darwin':
                 try:
-                    # Ищем все /dev/cu.* с BT OBD ключевыми словами (cu = правильный!)
+                    # Search all /dev/cu.* with BT OBD keywords (cu = correct!)
                     potential_bt_cu = glob.glob('/dev/cu.*')
                     for p in potential_bt_cu:
                         kw = any(kw in p.lower() for kw in ["obd", "elm", "scan", "kingbolen"])
                         skip = any(s in p.lower() for s in ["incoming", "modem", "debug", "console"])
                         if kw and not skip and p not in ports:
-                            ports.insert(0, p)  # Ставим первым — наиболее вероятный BT адаптер
-                            print(f"[PORT SCAN] Найден BT адаптер: {p}")
+                            ports.insert(0, p)  # Place first as most probable BT adapter
+                            print(f"[PORT SCAN] Found BT adapter: {p}")
 
-                    # Псевдотерминалы (PTY) для эмулятора
+                    # Pseudo-terminals (PTY) for emulator
                     current_tty = ""
                     try:
                         current_tty = os.ttyname(sys.stdout.fileno())
@@ -826,19 +827,19 @@ class OBDDashboardQT(QMainWindow):
                         if pty != current_tty and pty not in ports:
                             ports.append(pty)
                 except Exception as pty_err:
-                    print(f"Ошибка автопоиска PTY на macOS: {pty_err}")
+                    print(f"Error scanning PTY on macOS: {pty_err}")
 
-            # print(f"[PORT SCAN] Найдено портов: {ports}")
+            # print(f"[PORT SCAN] Found ports: {ports}")
             
             self.port_dropdown.clear()
             self.port_dropdown.addItem("Auto-Detect")
             self.port_dropdown.addItems(ports)
 
-            # Автоматически выбираем cu.OBDII если он найден
+            # Auto-select cu.OBDII if detected
             for i in range(self.port_dropdown.count()):
                 if 'cu.' in self.port_dropdown.itemText(i) and 'obd' in self.port_dropdown.itemText(i).lower():
                     self.port_dropdown.setCurrentIndex(i)
-                    print(f"[PORT SCAN] Автовыбор: {self.port_dropdown.itemText(i)}")
+                    print(f"[PORT SCAN] Auto-selected: {self.port_dropdown.itemText(i)}")
                     break
 
             if self.demo_checkbox.isChecked():
@@ -938,19 +939,19 @@ class OBDDashboardQT(QMainWindow):
             self.polling_thread.start()
 
     def _log(self, msg):
-        """Выводит сообщение в консоль и пытается отправить в UI"""
+        """Outputs message to console and forwards to UI"""
         print(msg, flush=True)
 
     def _test_bt_raw(self, port, bauds_to_test):
-        """Проверяет что BT адаптер физически отвечает на ATZ команду.
-        Возвращает True если адаптер живой (ELM327 ответил), False если нет.
+        """Verifies that BT adapter responds to ATZ command.
+        Returns True if adapter is responsive (ELM327 answered), False otherwise.
         """
         import serial as _serial
         import threading
 
         def attempt_open(target_port, target_baud, result_dict):
             try:
-                # Открываем порт с коротким таймаутом на чтение/запись
+                # Open port with short read/write timeout
                 s = _serial.Serial(target_port, target_baud, timeout=1.0, write_timeout=1.0)
                 result_dict['serial'] = s
             except Exception as e:
@@ -958,20 +959,20 @@ class OBDDashboardQT(QMainWindow):
 
         for baud in bauds_to_test:
             try:
-                self._log(f"  🔵 Тест raw serial: {port} @ {baud} baud...")
+                self._log(f"  🔵 Testing raw serial: {port} @ {baud} baud...")
                 res_dict = {}
-                # Запускаем открытие в фоновом потоке, так как на Windows оффлайн/incoming BT-порты намертво вешают поток открытия
+                # Open in background thread as offline/incoming BT ports on Windows can freeze indefinitely
                 t = threading.Thread(target=attempt_open, args=(port, baud, res_dict))
                 t.daemon = True
                 t.start()
-                t.join(timeout=1.5) # Ждем максимум 1.5 секунды
+                t.join(timeout=1.5)  # Wait up to 1.5 seconds max
 
                 if t.is_alive():
-                    self._log(f"  ❌ Открытие порта {port} зависло (вероятно, оффлайн/incoming Bluetooth-порт). Пропускаем.")
+                    self._log(f"  ❌ Opening port {port} timed out (likely offline/incoming Bluetooth port). Skipping.")
                     continue
 
                 if 'error' in res_dict:
-                    self._log(f"  ❌ Ошибка открытия {port} @ {baud}: {res_dict['error']}")
+                    self._log(f"  ❌ Error opening {port} @ {baud}: {res_dict['error']}")
                     continue
 
                 s = res_dict.get('serial')
@@ -982,30 +983,30 @@ class OBDDashboardQT(QMainWindow):
                     time.sleep(0.2)
                     s.reset_input_buffer()
                     s.write(b"ATZ\r")
-                    time.sleep(0.8)  # Даем ELM327 время ответить
+                    time.sleep(0.8)  # Allow ELM327 time to respond
                     response = s.read(128)
                     s.close()
                     self._log(f"  Raw response: {response!r}")
                     if response and any(x in response for x in [b"ELM", b">", b"ATZ", b"OK"]):
-                        self._log(f"  ✅ Адаптер отвечает на baud={baud}!")
+                        self._log(f"  ✅ Adapter responding on baud={baud}!")
                         return True
                     elif response:
-                        self._log(f"  ⚠️  Ответ получен но непонятный (baud={baud}): {response!r}")
+                        self._log(f"  ⚠️  Response received but unrecognized (baud={baud}): {response!r}")
                     else:
-                        self._log(f"  ❌ Нет ответа @ baud={baud}")
+                        self._log(f"  ❌ No response @ baud={baud}")
                 except Exception as e:
-                    self._log(f"  ❌ Ошибка обмена с {port} @ {baud}: {e}")
+                    self._log(f"  ❌ Communication error with {port} @ {baud}: {e}")
                     try:
                         s.close()
                     except Exception:
                         pass
             except Exception as e:
-                self._log(f"  ❌ Ошибка теста {port} @ {baud}: {e}")
+                self._log(f"  ❌ Test error for {port} @ {baud}: {e}")
         return False
 
     def _try_query_did(self, did_bytes, header, description):
-        """Пробует отправить одну UDS команду с указанным header.
-        Возвращает (raw_data, hex_string) если ответ получен, иначе (None, hex_string).
+        """Attempts to send single UDS command with specified header.
+        Returns (raw_data, hex_string) if response received, otherwise (None, hex_string).
         """
         try:
             probe_cmd = OBDCommand(
@@ -1014,13 +1015,13 @@ class OBDDashboardQT(QMainWindow):
             )
             res = self.connection.query(probe_cmd, force=True)
             
-            # Если python-obd успешно распознал ответ
+            # If python-obd successfully recognized response
             if not res.is_null() and res.value is not None:
                 hex_str = " ".join(f"{b:02X}" for b in res.value)
                 return res.value, hex_str
             
-            # ВАЖНО: Если python-obd считает ответ "null" (из-за несовпадения с его OBD схемой),
-            # но от адаптера пришли сырые сообщения — мы извлекаем из них данные напрямую!
+            # IMPORTANT: If python-obd returns null (schema mismatch),
+            # but raw adapter messages were received, extract data directly!
             raw_msgs = res.messages if hasattr(res, 'messages') else []
             if raw_msgs:
                 for m in raw_msgs:
@@ -1033,17 +1034,17 @@ class OBDDashboardQT(QMainWindow):
             return None, f"ERROR: {e}"
 
     def _scan_working_commands(self):
-        """Фаза сканирования: пробуем разные DID + headers, чтобы найти рабочие.
-        Возвращает dict с найденными рабочими командами."""
+        """Scan phase: test candidate DIDs + headers to find working commands.
+        Returns dict with confirmed working commands."""
         self._log("\n" + "=" * 70)
-        self._log("  🔍 ДИАГНОСТИЧЕСКОЕ СКАНИРОВАНИЕ ПОДДЕРЖИВАЕМЫХ КОМАНД")
-        self._log("  Audi E-tron — электромобиль, стандартные OBD PIDs не работают.")
-        self._log("  Пробуем UDS Service 0x22 (Read Data By Identifier)...")
+        self._log("  🔍 DIAGNOSTIC SCAN OF SUPPORTED COMMANDS")
+        self._log("  Audi E-tron is an EV; standard OBD PIDs are not supported.")
+        self._log("  Testing UDS Service 0x22 (Read Data By Identifier)...")
         self._log("=" * 70)
 
         found = {}
         
-        # Пробуем разные DID для каждого параметра
+        # Test candidate DIDs for each parameter
         for param_name, did_list in [
             ("speed", SPEED_DIDS_TO_TRY),
             ("soc", SOC_DIDS_TO_TRY),
@@ -1051,16 +1052,16 @@ class OBDDashboardQT(QMainWindow):
             ("temp", TEMP_DIDS_TO_TRY),
             ("current", CURRENT_DIDS_TO_TRY),
         ]:
-            self._log(f"\n--- Сканируем: {param_name.upper()} ---")
+            self._log(f"\n--- Scanning: {param_name.upper()} ---")
             found_this_param = False
             
             for did_bytes, desc in did_list:
                 if found_this_param:
                     break
                     
-                # Для стандартных OBD команд (01xx) не нужен кастомный header
+                # Standard OBD commands (01xx) do not require custom header
                 if did_bytes.startswith(b"01"):
-                    headers_for_this = [None]  # None = не менять header
+                    headers_for_this = [None]  # None = do not modify header
                 else:
                     headers_for_this = EV_HEADERS_TO_TRY
                 
@@ -1069,10 +1070,10 @@ class OBDDashboardQT(QMainWindow):
                         return found
                         
                     header_str = header.decode() if header else "default"
-                    self._log(f"  ▶ Пробуем {desc} (header={header_str})...")
+                    self._log(f"  ▶ Testing {desc} (header={header_str})...")
                     
                     data, hex_str = self._try_query_did(did_bytes, header, desc)
-                    time.sleep(0.15)  # Пауза между запросами
+                    time.sleep(0.15)  # Delay between requests
                     
                     if data is not None and len(data) > 0:
                         is_uds = did_bytes.startswith(b"22")
@@ -1085,7 +1086,7 @@ class OBDDashboardQT(QMainWindow):
                             is_valid = True
                             
                         if is_valid:
-                            self._log(f"  ✅ ОТВЕТ ПОЛУЧЕН: [{hex_str}]")
+                            self._log(f"  ✅ RESPONSE RECEIVED: [{hex_str}]")
                             found[param_name] = {
                                 "did": did_bytes,
                                 "header": header,
@@ -1096,37 +1097,37 @@ class OBDDashboardQT(QMainWindow):
                             break
                         else:
                             if data[0] == 0x7F:
-                                self._log(f"  ❌ Отказ ЭБУ (NRC): [{hex_str}]")
+                                self._log(f"  ❌ ECU Negative Response (NRC): [{hex_str}]")
                             else:
-                                self._log(f"  ❌ Мусор/нули от адаптера: [{hex_str}]")
+                                self._log(f"  ❌ Garbage/zeros from adapter: [{hex_str}]")
                     else:
-                        self._log(f"  ❌ Нет ответа (raw: [{hex_str}])")
+                        self._log(f"  ❌ No response (raw: [{hex_str}])")
         
         self._log("\n" + "=" * 70)
-        self._log("  📊 РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ:")
+        self._log("  📊 SCAN RESULTS:")
         if found:
             for param, info in found.items():
                 h = info['header'].decode() if info['header'] else 'default'
                 self._log(f"  ✅ {param.upper()}: {info['desc']} (header={h})")
         else:
-            self._log("  ⚠️  НИ ОДНА КОМАНДА НЕ ВЕРНУЛА ДАННЫХ.")
-            self._log("  Возможные причины:")
-            self._log("    1. Security Gateway блокирует доступ через дешёвый ELM327")
-            self._log("    2. Нужен другой CAN header для вашей модели E-tron")
-            self._log("    3. Адаптер не поддерживает UDS Service 0x22")
+            self._log("  ⚠️  NO COMMANDS RETURNED VALID DATA.")
+            self._log("  Possible reasons:")
+            self._log("    1. Security Gateway blocks access through standard ELM327")
+            self._log("    2. Requires different CAN header for this E-tron variant")
+            self._log("    3. Adapter does not support UDS Service 0x22")
         self._log("=" * 70 + "\n")
         
         return found
 
     def _decode_response(self, param_name, data):
-        """Декодирует сырые данные ответа в числовое значение."""
+        """Decodes raw response data into numerical metric."""
         if data is None or len(data) < 3:
             return 0.0
         
         try:
-            # UDS ответ: 62 [DID_H] [DID_L] [data...]
+            # UDS response: 62 [DID_H] [DID_L] [data...]
             if data[0] == 0x62:
-                payload = data[3:]  # Данные после 62 DID_H DID_L
+                payload = data[3:]  # Data bytes after 62 DID_H DID_L
                 if param_name == "soc":
                     if len(payload) >= 1:
                         # 0x57 = 87 = 87%
@@ -1136,15 +1137,15 @@ class OBDDashboardQT(QMainWindow):
                         else:
                             return val * 100.0 / 255.0
                 elif param_name == "speed":
-                    # Если это стандартная скорость проброшенная через UDS (DID F40D)
+                    # Standard speed routed via UDS (DID F40D)
                     if data[1] == 0xF4 and data[2] == 0x0D and len(payload) >= 1:
-                        return float(payload[0])  # 1 байт = 1 км/ч
+                        return float(payload[0])  # 1 byte = 1 km/h
                     
-                    # Если это проприетарная скорость Audi (DID 0281)
+                    # Audi proprietary speed (DID 0281)
                     if len(payload) >= 2:
                         raw = payload[0] * 256 + payload[1]
                         val = raw / 100.0
-                        if val > 300:  # Защита от бредовых значений
+                        if val > 300:  # Out-of-bounds guard
                             val = payload[0]
                         return float(val)
                     elif len(payload) >= 1:
@@ -1152,18 +1153,18 @@ class OBDDashboardQT(QMainWindow):
                 elif param_name == "voltage":
                     if len(payload) >= 2:
                         raw = payload[0] * 256 + payload[1]
-                        # Для VAG HV Voltage (DID 1E3B) делитель = 10.0
+                        # For VAG HV Voltage (DID 1E3B) divisor = 10.0
                         if data[1] == 0x1E and data[2] == 0x3B:
                             return raw / 10.0
                         return raw / 4.0
                 elif param_name == "temp":
-                    # VAG Battery Temp (1EB1): Сырой байт 0x7C (124) -> 24 °C. Формула A - 100.
+                    # VAG Battery Temp (1EB1): Raw byte 0x7C (124) -> 24 °C. Formula A - 100.
                     if data[1] == 0x1E and data[2] == 0xB1 and len(payload) >= 1:
                         return payload[0] - 100.0
                         
                     if len(payload) >= 1:
                         if payload[0] == 0xFF or payload[0] == 0x00:
-                            return 0.0 # FF или 00 = dummy/not supported
+                            return 0.0  # FF or 00 = dummy/not supported
                         return payload[0] - 40.0
                 elif param_name == "current":
                     if len(payload) >= 3:
@@ -1173,7 +1174,7 @@ class OBDDashboardQT(QMainWindow):
                         raw = payload[0] * 256 + payload[1]
                         return float(raw)
             
-            # Стандартный OBD ответ: 41 [PID] [data...]
+            # Standard OBD response: 41 [PID] [data...]
             elif data[0] == 0x41:
                 pid = data[1]
                 payload = data[2:]
@@ -1186,7 +1187,7 @@ class OBDDashboardQT(QMainWindow):
                 elif pid == 0x5B and len(payload) >= 1:  # Hybrid battery
                     return payload[0] * 100.0 / 255.0
         except Exception as e:
-            self._log(f"  ⚠️ Ошибка декодирования {param_name}: {e}")
+            self._log(f"  ⚠️ Error decoding {param_name}: {e}")
         
         return 0.0
 
@@ -1225,7 +1226,7 @@ class OBDDashboardQT(QMainWindow):
         # --- Generate BT Port List ---
         bt_ports_to_try = []
         if is_bt_conn and self.port_dropdown.currentText() == "Auto-Detect":
-            self._log("🔍 Автопоиск BT портов в фоне...")
+            self._log("🔍 Background auto-detect of BT ports...")
             try:
                 import serial.tools.list_ports
                 ports_raw = [p.device for p in serial.tools.list_ports.comports()]
@@ -1245,7 +1246,7 @@ class OBDDashboardQT(QMainWindow):
                         if kw and not skip and p not in bt_ports_to_try:
                             bt_ports_to_try.insert(0, p)
             except Exception as e:
-                self._log(f"Ошибка при сканировании портов: {e}")
+                self._log(f"Error scanning ports: {e}")
         else:
             bt_ports_to_try = [self.port_dropdown.currentText()]
 
@@ -1265,14 +1266,14 @@ class OBDDashboardQT(QMainWindow):
             configs_to_try.append({'port': actual_wifi_port, 'bauds': [None], 'protos': protocols_to_try, 'is_wifi': True})
         elif is_bt_conn:
             if not bt_ports_to_try:
-                self._log("❌ Нет доступных BT-портов для подключения.")
+                self._log("❌ No available BT ports found for connection.")
                 self.signals.connection_failed.emit("No BT ports found")
                 return
             for p in bt_ports_to_try:
                 configs_to_try.append({'port': p, 'bauds': bt_bauds_to_try, 'protos': protocols_to_try, 'is_wifi': False})
 
         if not configs_to_try:
-            self._log("❌ Нет конфигураций для подключения.")
+            self._log("❌ No connection configurations available.")
             self.signals.connection_failed.emit("No connection configurations")
             return
 
@@ -1285,7 +1286,7 @@ class OBDDashboardQT(QMainWindow):
             port = config['port']
             is_wifi = config['is_wifi']
             
-            # Предварительная BT диагностика (для macOS и Windows COM-портов)
+            # Preliminary BT diagnostics (for macOS and Windows COM ports)
             is_bt_port = False
             if sys.platform == 'darwin' and '/dev/cu.' in port:
                 is_bt_port = True
@@ -1295,18 +1296,18 @@ class OBDDashboardQT(QMainWindow):
                 is_bt_port = True
 
             if not is_wifi and is_bt_port:
-                self._log(f"\n🔵 BT диагностика: проверяем {port}...")
+                self._log(f"\n🔵 BT Diagnostics: testing {port}...")
                 bt_alive = self._test_bt_raw(port, config['bauds'])
                 if not bt_alive:
-                    self._log(f"⚠️  BT порт {port} не отвечает на AT команды.")
-                    # В авторежиме просто пробуем следующий порт
+                    self._log(f"⚠️  BT port {port} is not responding to AT commands.")
+                    # In auto mode proceed to next port
                     if len(bt_ports_to_try) == 1:
                         self.signals.connection_failed.emit("BT adapter not responding. Check connection in System Settings / Device Manager")
                         return
                     continue
-                self._log(f"✅ BT адаптер отвечает! Продолжаем подключение...\n")
+                self._log(f"✅ BT adapter is responding! Continuing connection...\n")
                 if sys.platform == 'win32':
-                    self._log("⏳ Пауза 2.5 сек для полного освобождения Bluetooth-канала в ОС Windows...")
+                    self._log("⏳ Pausing 2.5s to allow OS Bluetooth channel teardown...")
                     time.sleep(2.5)
 
             for baud_for_conn in config['bauds']:
@@ -1321,7 +1322,7 @@ class OBDDashboardQT(QMainWindow):
 
                         proto_name_debug = f"Protocol: {proto_param}" if proto_param else "Protocol: Auto"
                         baud_str = str(baud_param) if baud_param else "auto"
-                        self._log(f"🔌 Подключаемся: {port} | baud={baud_str} | {proto_name_debug} | timeout={conn_timeout}s")
+                        self._log(f"🔌 Connecting: {port} | baud={baud_str} | {proto_name_debug} | timeout={conn_timeout}s")
 
                         self.connection = obd.OBD(
                             portstr=port,
@@ -1337,13 +1338,13 @@ class OBDDashboardQT(QMainWindow):
                                 proto_name = self.connection.protocol_name()
                             except Exception:
                                 pass
-                            self._log(f"✅ Подключение успешно: {port}")
-                            self._log(f"   Протокол: {proto_name}")
-                            self._log(f"   Адаптер: {self.connection.port_name()}")
+                            self._log(f"✅ Connected successfully: {port}")
+                            self._log(f"   Protocol: {proto_name}")
+                            self._log(f"   Adapter: {self.connection.port_name()}")
                             connected = True
                             break
                         else:
-                            self._log(f"❌ Не удалось: {port} | baud={baud_str} | proto={proto_param}")
+                            self._log(f"❌ Failed: {port} | baud={baud_str} | proto={proto_param}")
                             if self.connection:
                                 try:
                                     self.connection.close()
@@ -1352,7 +1353,7 @@ class OBDDashboardQT(QMainWindow):
                                 self.connection = None
                             time.sleep(1.0)
                     except Exception as e:
-                        self._log(f"❌ Ошибка: {port} ({proto_param}): {e}")
+                        self._log(f"❌ Error: {port} ({proto_param}): {e}")
                         if self.connection:
                             try:
                                 self.connection.close()
@@ -1368,7 +1369,7 @@ class OBDDashboardQT(QMainWindow):
                 is_ev = (self.vehicle_profile_dropdown.currentIndex() == 0)
                     
                 if is_ev:
-                    # ============ ФАЗА 1: СКАНИРОВАНИЕ (UDS EV) ============
+                    # ============ PHASE 1: SCANNING (UDS EV) ============
                     self.signals.update_data.emit(0, 0, 0, 0, 150000.0, "Scanning EV commands...")
                     working_cmds = self._scan_working_commands()
                         
@@ -1394,18 +1395,18 @@ class OBDDashboardQT(QMainWindow):
                     has_any_data = len(active_commands) > 0
                         
                     if not has_any_data:
-                        self._log("\n⚠️  Переходим в режим стандартных OBD-II PIDs (fallback)...")
+                        self._log("\n⚠️  Falling back to standard OBD-II PIDs...")
                         status_str = "Connected (no EV data — standard OBD)"
                     else:
                         found_names = ", ".join(active_commands.keys())
                         status_str = f"EV Mode: {found_names}"
-                        self._log(f"\n🚀 Начинаем опрос: {found_names}")
+                        self._log(f"\n🚀 Starting polling loop: {found_names}")
                 else:
                     has_any_data = False
                     status_str = "Connected (Standard ICE)"
-                    self._log(f"\n🚀 Начинаем опрос (Standard OBD-II): RPM, Speed, Temp, Fuel")
+                    self._log(f"\n🚀 Starting polling loop (Standard OBD-II): RPM, Speed, Temp, Fuel")
                     
-                # ============ ФАЗА 2: ЦИКЛИЧЕСКИЙ ОПРОС ============
+                # ============ PHASE 2: CYCLIC POLLING ============
                 poll_count = 0
                 dtc_counter = 0
                     
@@ -1418,7 +1419,7 @@ class OBDDashboardQT(QMainWindow):
                     current_val = 150000.0
                         
                     if has_any_data:
-                        # Опрос через кастомные UDS команды
+                        # Polling via custom UDS commands
                         for param_name, cmd in active_commands.items():
                             if not self.is_running:
                                 break
@@ -1441,7 +1442,7 @@ class OBDDashboardQT(QMainWindow):
                                 elif param_name == "current":
                                     current_val = val
                                     
-                                # Подробный debug каждые 10 циклов
+                                # Verbose debug every 10 cycles
                                 if poll_count % 10 == 0:
                                     self._log(f"  {param_name}: {val:.1f} (raw: [{hex_str}])")
                             else:
@@ -1449,11 +1450,11 @@ class OBDDashboardQT(QMainWindow):
                                     self._log(f"  {param_name}: NO DATA")
                                         
                     else:
-                        # Стандартный OBD-II (ДВС или Fallback)
+                        # Standard OBD-II (ICE or Fallback)
                         speed_res = self.connection.query(obd.commands.SPEED, force=True)
                         time.sleep(0.01)
                             
-                        # Для ДВС пишем RPM во второй прибор
+                        # For ICE write RPM into second gauge
                         if not is_ev:
                             rpm_res = self.connection.query(obd.commands.RPM, force=True)
                             voltage_val = rpm_res.value.magnitude if not rpm_res.is_null() and rpm_res.value is not None else 0.0
@@ -1465,7 +1466,7 @@ class OBDDashboardQT(QMainWindow):
                         temp_res = self.connection.query(obd.commands.COOLANT_TEMP, force=True)
                         time.sleep(0.01)
                             
-                        # Для ДВС пишем Напряжение бортовой сети в четвертый прибор
+                        # For ICE write 12V system voltage into fourth gauge
                         if not is_ev:
                             volt_res = self.connection.query(obd.commands.CONTROL_MODULE_VOLTAGE, force=True)
                             soc_val = volt_res.value.magnitude if not volt_res.is_null() and volt_res.value is not None else 0.0
@@ -1507,7 +1508,7 @@ class OBDDashboardQT(QMainWindow):
                         
             except Exception as e:
                 import traceback
-                self._log(f"\n❌ ОШИБКА: {e}")
+                self._log(f"\n❌ ERROR: {e}")
                 traceback.print_exc()
                 self.signals.connection_failed.emit(f"Error: {str(e)}")
             finally:
@@ -1521,11 +1522,11 @@ class OBDDashboardQT(QMainWindow):
             self.signals.connection_failed.emit("Connection Failed — check adapter")
     
     def run_demo_loop(self):
-        """Демо-режим: симулирует электромобиль (скорость, HV напряжение, температура батареи, SOC)"""
+        """Demo mode: simulates EV telemetry (speed, HV voltage, battery temp, SOC)"""
         is_ev = (self.vehicle_profile_dropdown.currentIndex() == 0)
         demo_time = 0.0
         current_speed = 0.0
-        current_voltage = 396.0 if is_ev else 800.0   # Для EV вольтаж, для ДВС обороты RPM (холостые 800)
+        current_voltage = 396.0 if is_ev else 800.0   # For EV voltage, for ICE RPM (idle 800)
         current_temp = 22.0
         current_soc = 85.0
         dtc_counter = 0
@@ -1534,7 +1535,7 @@ class OBDDashboardQT(QMainWindow):
             demo_time += 0.08
             cycle = (demo_time // 30) % 2
             
-            # Температура батареи/ДВС медленно растёт при движении
+            # Battery/ICE temperature rises gradually during driving
             if current_speed > 0:
                 current_temp += 0.02 if is_ev else 0.05
             if current_temp > (45.0 if is_ev else 90.0):
@@ -1542,17 +1543,17 @@ class OBDDashboardQT(QMainWindow):
             elif current_temp < 18.0:
                 current_temp = 18.0
 
-            # Заряд / Топливо
+            # Battery SOC / Fuel level
             if cycle == 0:
-                current_soc -= 0.015 if is_ev else 0.01  # Расход заряда или бензина
+                current_soc -= 0.015 if is_ev else 0.01  # Battery or fuel consumption
             else:
-                current_soc += 0.005 if is_ev else 0.0   # Рекуперация (у ДВС нет)
+                current_soc += 0.005 if is_ev else 0.0   # Regeneration (EV only)
             
             if current_soc < 15.0: current_soc = 85.0
             elif current_soc > 100.0: current_soc = 100.0
 
             if cycle == 0:
-                # Разгон
+                # Acceleration
                 if current_speed < 130:
                     current_speed += random.uniform(0.1, 0.3)
                 else:
@@ -1562,7 +1563,7 @@ class OBDDashboardQT(QMainWindow):
                     current_voltage = 396.0 - (current_speed / 130.0) * 20.0 + random.uniform(-2, 2)
                     sim_current_amps = - (current_speed / 130.0) * 150.0 - random.uniform(0, 5)
                 else:
-                    # ДВС: Симулируем переключения передач
+                    # ICE: Simulate gear shifts
                     spd = current_speed
                     if spd < 30:
                         rpm = 800 + (spd / 30.0) * 2200
@@ -1575,7 +1576,7 @@ class OBDDashboardQT(QMainWindow):
                     current_voltage = rpm + random.uniform(-20, 20)
                     sim_current_amps = 0.0
             else:
-                # Торможение
+                # Braking
                 current_speed -= 0.2
                 if current_speed < 0:
                     current_speed = 0
@@ -1588,7 +1589,7 @@ class OBDDashboardQT(QMainWindow):
                         current_voltage = 408.0 + random.uniform(-1, 1)
                         sim_current_amps = -1.0 + random.uniform(-0.1, 0.1)
                 else:
-                    # ДВС: Обороты падают
+                    # ICE: Engine RPM drops
                     if current_speed > 0:
                         rpm = 1200 + (current_speed / 130.0) * 800
                     else:
@@ -1597,7 +1598,7 @@ class OBDDashboardQT(QMainWindow):
                     sim_current_amps = 0.0
 
             if is_ev:
-                # Конвертируем Амперы обратно в сырое значение (offset = 150000)
+                # Convert Amperes back to raw value (offset = 150000)
                 sim_current_raw = 150000.0 + sim_current_amps * 100.0
                 self.signals.update_data.emit(current_speed, current_voltage, current_temp, current_soc, sim_current_raw, "Connected (EV Simulator)")
             else:
@@ -1658,16 +1659,16 @@ class OBDDashboardQT(QMainWindow):
 
             # Color coding for EV power
             if power_kw < -1.0:
-                color = "#00d2ff" # Рекуперация (голубой)
+                color = "#00d2ff"  # Regeneration (Cyan)
                 self.rpm_val_label.setStyleSheet("color: #00d2ff;")
             elif power_kw > 10.0:
-                color = "#ff5e62" # Активный разгон (красно-оранжевый)
+                color = "#ff5e62"  # Hard acceleration (Red-Orange)
                 self.rpm_val_label.setStyleSheet("color: #ff5e62;")
             elif power_kw > 1.0:
-                color = "#ffb732" # Слабый разгон (оранжевый)
+                color = "#ffb732"  # Moderate acceleration (Orange)
                 self.rpm_val_label.setStyleSheet("color: #ffb732;")
             else:
-                color = "#00fa9a" # Покой (зеленый)
+                color = "#00fa9a"  # Coasting / Idle (Green)
                 self.rpm_val_label.setStyleSheet("color: #ffffff;")
             self.rpm_gauge.setColor(color)
         else:
@@ -1680,13 +1681,13 @@ class OBDDashboardQT(QMainWindow):
 
             # Color coding for ICE engine RPM
             if val2 > 4500:
-                color = "#ff4c4c" # Красная зона
+                color = "#ff4c4c"  # Redline
                 self.rpm_val_label.setStyleSheet("color: #ff4c4c;")
             elif val2 > 3000:
-                color = "#ffb732" # Повышенные обороты
+                color = "#ffb732"  # Elevated RPM
                 self.rpm_val_label.setStyleSheet("color: #ffb732;")
             else:
-                color = "#00fa9a" # Обычные обороты
+                color = "#00fa9a"  # Normal RPM
                 self.rpm_val_label.setStyleSheet("color: #ffffff;")
             self.rpm_gauge.setColor(color)
 
@@ -1722,7 +1723,7 @@ class OBDDashboardQT(QMainWindow):
             QLabel {{ color: #ffffff; }}
             QLabel#StatusLabel {{ font-size: 11px; padding: 4px; }}
             
-            /* Стилизация заголовков в сайдбаре */
+            /* Sidebar header styling */
             QLabel[text="Select Port:"], QLabel[text="IP Address & Port:"], QLabel[text="Select Baudrate:"], QLabel[text="Select Protocol:"], QLabel[text="Connection Type:"], QLabel[text="Vehicle Profile:"] {{
                 color: #646b8a; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;
             }}

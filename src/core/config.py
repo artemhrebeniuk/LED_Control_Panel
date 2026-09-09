@@ -1,25 +1,26 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-config.py — Централизованная конфигурация LED-экрана и сетевых параметров.
+config.py — Centralized configuration for LED display matrix and network parameters.
 
-Этот модуль содержит ВСЕ настраиваемые параметры системы.
+This module contains ALL configurable parameters of the system.
 
-РАЗРЕШЕНИЕ ЭКРАНА определяется двумя способами:
-  1. Автоматически — при запуске приложение запрашивает GET /device
-     у плеера и получает реальные screenWidth/screenHeight. Из них
-     обратно вычисляются SCREEN_COLS и SCREEN_ROWS.
-  2. Вручную (fallback) — если устройство недоступно, используются
-     значения по умолчанию SCREEN_COLS=2, SCREEN_ROWS=2.
+SCREEN RESOLUTION is determined in two ways:
+  1. Automatic — on startup, the application requests GET /device
+     from the player and receives the actual screenWidth/screenHeight.
+     From these, SCREEN_COLS and SCREEN_ROWS are dynamically computed.
+  2. Manual (fallback) — if the device is offline, default values
+     SCREEN_COLS=2, SCREEN_ROWS=2 are utilized.
 
-Класс ScreenConfig хранит текущее состояние и позволяет обновлять
-размеры в рантайме (например, после переподключения устройства).
+The ScreenConfig class maintains runtime state and allows updating
+dimensions dynamically (e.g., following device reconnection).
 """
 
 import json
 import os
 
 # ====================================================================
-# ФИЗИЧЕСКИЕ ПАРАМЕТРЫ ОДНОГО LED-МОДУЛЯ
+# PHYSICAL PARAMETERS OF A SINGLE LED MODULE
 # ====================================================================
 HARDWARE_CONFIG_FILE = "data/hardware_config.json"
 
@@ -79,38 +80,38 @@ def save_hardware_config(width: int, height: int, cols: int, rows: int, auto_gri
 
 
 # ====================================================================
-# КОНФИГУРАЦИЯ СЕТКИ ПО УМОЛЧАНИЮ (используется если устройство оффлайн)
+# DEFAULT GRID CONFIGURATION (Fallback when offline)
 # ====================================================================
-DEFAULT_SCREEN_COLS: int = 2     # Количество панелей по горизонтали
-DEFAULT_SCREEN_ROWS: int = 2     # Количество панелей по вертикали
+DEFAULT_SCREEN_COLS: int = 2     # Number of horizontal panels
+DEFAULT_SCREEN_ROWS: int = 2     # Number of vertical panels
 
 # ====================================================================
-# СЕТЕВЫЕ ПАРАМЕТРЫ УСТРОЙСТВА
+# DEVICE NETWORK PARAMETERS
 # ====================================================================
-LAN_IP: str = "169.254.250.250"       # IP-адрес по умолчанию для кабеля (APIPA)
-WIFI_IP: str = "192.168.43.1"         # IP-адрес по умолчанию для Wi-Fi AP Kystar KD6
+LAN_IP: str = "169.254.250.250"       # Default IP for direct Ethernet cable (APIPA)
+WIFI_IP: str = "192.168.43.1"         # Default IP for Kystar KD6 Wi-Fi AP
 
 DEVICE_IP: str = WIFI_IP if CONNECTION_MODE == "WIFI" else LAN_IP
-API_PORT: int = 18080                 # Основной порт API
-REBOOT_PORT: int = 18081              # Порт для команды перезагрузки
+API_PORT: int = 18080                 # Primary HTTP API port
+REBOOT_PORT: int = 18081              # Port for device reboot commands
 
 BASE_URL: str = f"http://{DEVICE_IP}:{API_PORT}"
 REBOOT_URL: str = f"http://{DEVICE_IP}:{REBOOT_PORT}"
 
 def get_current_urls():
-    """Возвращает актуальные URL на основе выбранного режима."""
+    """Returns active URLs based on selected connection mode."""
     ip = WIFI_IP if CONNECTION_MODE == "WIFI" else LAN_IP
     return f"http://{ip}:{API_PORT}", f"http://{ip}:{REBOOT_PORT}"
 
 # ====================================================================
-# ТАЙМАУТЫ И ИНТЕРВАЛЫ
+# TIMEOUTS & INTERVALS
 # ====================================================================
-HTTP_TIMEOUT: int = 10               # Таймаут HTTP-запросов в секундах
-PING_INTERVAL_MS: int = 5000         # Интервал пинга устройства (мс)
-BRIGHTNESS_DEBOUNCE_MS: int = 300    # Задержка отправки яркости (мс)
+HTTP_TIMEOUT: int = 10               # HTTP request timeout in seconds
+PING_INTERVAL_MS: int = 5000         # Device ping heartbeat interval (ms)
+BRIGHTNESS_DEBOUNCE_MS: int = 300    # Brightness slider debounce delay (ms)
 
 # ====================================================================
-# ТИПЫ МЕДИАФАЙЛОВ
+# MEDIA FILE TYPES
 # ====================================================================
 MEDIA_TYPE_VIDEO: int = 1
 MEDIA_TYPE_IMAGE: int = 2
@@ -118,23 +119,23 @@ MEDIA_TYPE_IMAGE: int = 2
 VIDEO_EXTENSIONS: set[str] = {".mp4", ".avi", ".mov", ".mkv", ".rmvb", ".3gp", ".flv", ".wmv"}
 IMAGE_EXTENSIONS: set[str] = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 
-DEFAULT_IMAGE_DURATION_MS: int = 10000  # 10 секунд
+DEFAULT_IMAGE_DURATION_MS: int = 10000  # 10 seconds
 
 ALLOWED_EXTENSIONS: set[str] = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS
 
 
 class ScreenConfig:
     """
-    Динамическая конфигурация экрана, обновляемая в рантайме.
+    Dynamic screen configuration updated at runtime.
 
-    При запуске и периодически (через PingWorker) приложение запрашивает
-    у плеера информацию о картах (GET /getCardInfo).
+    During startup and periodically (via PingWorker), the application queries
+    receiver card information from the player (GET /getCardInfo).
     
-    rxNum — количество подключенных приёмных карт (модулей).
-    Поскольку ширина фиксирована (SCREEN_COLS = 2), мы вычисляем количество
-    рядов как rxNum // SCREEN_COLS.
+    rxNum represents connected receiving cards (modules).
+    Since column count is configured (e.g., SCREEN_COLS = 2), rows are
+    derived as rxNum // SCREEN_COLS.
 
-    Если устройство недоступно или возвращает 0 карт, используются значения по умолчанию.
+    If the device is offline or reports 0 cards, fallback defaults are used.
     """
 
     def __init__(self) -> None:
@@ -171,11 +172,11 @@ class ScreenConfig:
 
     def update_from_device_info(self, screen_width: int, screen_height: int, rx_num: int = 0) -> bool:
         """
-        Обновляет конфигурацию на основе реального разрешения холста (OS Canvas)
-        и количества подключенных приемных карт (rx_num).
+        Updates configuration based on actual canvas bounds (OS Canvas)
+        and number of connected receiving cards (rx_num).
         """
         if not AUTO_GRID:
-            # Ручной режим: сетка фиксирована
+            # Manual mode: fixed layout grid
             new_auto = False
             new_cols = SCREEN_COLS
             new_rows = SCREEN_ROWS
@@ -192,7 +193,7 @@ class ScreenConfig:
                 new_auto = True
                 self._connected_modules = rx_num if rx_num > 0 else SCREEN_COLS * SCREEN_ROWS
                 
-                # Умный расчет сетки на основе количества активных карт
+                # Dynamic grid layout calculation based on active cards
                 if rx_num > 0:
                     new_rows = SCREEN_ROWS
                     new_cols = max(1, (rx_num + new_rows - 1) // new_rows)
@@ -220,31 +221,31 @@ class ScreenConfig:
         return changed
 
     def get_grid_text(self) -> str:
-        """Возвращает текстовое описание текущей сетки."""
-        source = "авто" if self._auto_detected else "по умолчанию"
+        """Returns textual description of current display matrix."""
+        source = "auto" if self._auto_detected else "default"
         return (
-            f"Сетка: {self._cols}×{self._rows} "
+            f"Grid: {self._cols}×{self._rows} "
             f"({self._total_width}×{self._total_height} px) • "
-            f"Модулей: ~{self._connected_modules} ({source})"
+            f"Modules: ~{self._connected_modules} ({source})"
         )
 
 
 # ====================================================================
-# ГЛОБАЛЬНЫЙ СИНГЛТОН КОНФИГУРАЦИИ ЭКРАНА
-# Все модули используют этот единственный экземпляр.
+# GLOBAL SCREEN CONFIGURATION SINGLETON
+# All modules reference this single instance.
 # ====================================================================
 screen_config = ScreenConfig()
 
 
 def get_media_type(file_extension: str) -> int | None:
     """
-    Определяет тип медиафайла по расширению.
+    Determines media type based on file extension.
 
     Args:
-        file_extension: Расширение файла с точкой (например, '.mp4').
+        file_extension: File extension including leading dot (e.g., '.mp4').
 
     Returns:
-        1 для видео, 2 для изображения, None если тип неизвестен.
+        1 for video, 2 for image, None if unknown.
     """
     ext = file_extension.lower()
     if ext in VIDEO_EXTENSIONS:
@@ -256,16 +257,15 @@ def get_media_type(file_extension: str) -> int | None:
 
 def get_screen_payload(extra_params: dict | None = None) -> dict:
     """
-    Формирует базовый JSON-payload с текущими размерами экрана для API.
+    Constructs base JSON payload with current screen dimensions for API requests.
 
-    Использует актуальные значения из screen_config (которые могут
-    быть обновлены автодетектом с устройства).
+    Uses active values from screen_config (which may be updated via auto-detection).
 
     Args:
-        extra_params: Дополнительные параметры для включения в payload.
+        extra_params: Additional parameters to include in the payload.
 
     Returns:
-        Словарь с ключами width, height и любыми дополнительными параметрами.
+        Dictionary with width, height, and any additional parameters.
     """
     payload: dict = {
         "width": screen_config.total_width,

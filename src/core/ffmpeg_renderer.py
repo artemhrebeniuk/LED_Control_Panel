@@ -1,27 +1,30 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-ffmpeg_renderer.py — Сборка многозонных сцен через FFmpeg.
+ffmpeg_renderer.py — Multi-zone scene compositing and video processing via FFmpeg.
 
-Поддерживает:
-- Изображения (jpg, png, bmp, webp)
-- Видео (mp4, avi, mkv, mov и др.)
-- Анимированные GIF
-- Смешанные сцены (видео + картинки в разных зонах)
+Supported media:
+- Images (jpg, png, bmp, webp)
+- Video (mp4, avi, mkv, mov, etc.)
+- Animated GIFs
+- Mixed scenes (video and static images in separate zones)
 
-ПОДВОДНЫЕ КАМНИ И РЕШЕНИЯ (Важно для будущей разработки):
-1. Проблема коротких видео/картинок: Если использовать `shortest=1` в overlay, 
-   любая статичная картинка моментально завершит рендер (1 кадр). 
-   Решение: используем `eof_action=pass` — когда короткое видео или GIF заканчивается, 
-   оно замирает на последнем кадре, позволяя длинному видео доиграть до конца.
-2. Рассинхронизация времени: При объединении видео с разными FPS, overlay ломается.
-   Решение: Использование `fps={target}` для ВСЕХ входов и `setpts=PTS-STARTPTS` 
-   для сброса таймстемпов, чтобы все потоки начинались ровно с 0.
-3. Ограничение FPS: LED-экраны Kystar физически не могут плавно отображать 60 FPS,
-   поэтому мы принудительно ограничиваем финальный FPS до 30 (`_MAX_OUTPUT_FPS`),
-   чтобы не перегружать аппаратный декодер и сеть.
+Key Architectural Solutions:
+1. Short videos / static image persistence:
+   Instead of `shortest=1` in overlay (which prematurely terminates the render
+   after 1 frame if static images are present), we use `eof_action=pass`.
+   When a shorter video or GIF ends, its final frame freezes in place,
+   allowing longer videos to complete their full duration.
+2. Timestamp synchronization:
+   When combining media with varying frame rates, timestamps are normalized
+   using `setpts=PTS-STARTPTS` and aligned to a uniform `fps={target}`.
+3. Hardware FPS Capping:
+   LED hardware cannot process 60 FPS video decodes reliably. Final output
+   is strictly capped at 30 FPS (`_MAX_OUTPUT_FPS`) to prevent decoder overruns.
 """
 
 import logging
+import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -31,16 +34,16 @@ from src.core.media_utils import get_media_duration, get_media_fps, has_audio_st
 
 logger = logging.getLogger(__name__)
 
-# Расширения, которые FFmpeg должен обрабатывать как видео-потоки
+# Extensions treated as video streams by FFmpeg
 _VIDEO_LIKE_EXTENSIONS = config.VIDEO_EXTENSIONS | {".gif"}
 
-# Максимальный FPS для выхода (ограничиваем, т.к. LED-экран не тянет 60fps)
+# Maximum output FPS (prevent hardware decoder overload on Kystar KD6)
 _MAX_OUTPUT_FPS = 30
 _DEFAULT_FPS = 25
 
 
 class FFmpegRenderer:
-    """Класс для сборки многозонных сцен через FFmpeg."""
+    """Multi-zone scene compositing engine utilizing FFmpeg."""
     
     def __init__(self, output_dir: str = "rendered_scenes"):
         self.output_dir = Path(output_dir)
@@ -48,50 +51,47 @@ class FFmpegRenderer:
         
     def _cleanup_old_scenes(self, max_files: int = 5):
         """
-        Очищает старые сгенерированные файлы, оставляя только `max_files` самых новых,
-        чтобы избежать переполнения диска ПК.
+        Cleans up older generated scene files, keeping only `max_files` newest
+        to conserve local disk space.
         """
         try:
             if not self.output_dir.exists():
                 return
             
-            # Получаем список всех файлов в папке, сортируем по времени изменения (от старых к новым)
+            # Sort files by modification time (oldest first)
             files = sorted(
                 self.output_dir.iterdir(),
                 key=lambda p: p.stat().st_mtime
             )
             
-            # Оставляем только `max_files` самых новых
             files_to_delete = files[:-max_files] if len(files) > max_files else []
             
             for file_path in files_to_delete:
                 if file_path.is_file():
                     try:
                         file_path.unlink()
-                        logger.debug("Очищен старый файл сцены: %s", file_path)
+                        logger.debug("Cleaned up old scene file: %s", file_path)
                     except Exception as e:
-                        logger.warning("Не удалось удалить старый файл %s: %s", file_path, e)
+                        logger.warning("Could not delete old scene file %s: %s", file_path, e)
                         
         except Exception as e:
-            logger.error("Ошибка при очистке старых сцен: %s", e)
+            logger.error("Error during scene cleanup: %s", e)
         
     def render_scene(self, zones: list[dict], rows: int, cols: int) -> str:
         """
-        Собирает сцену из зон.
+        Composites multi-zone layout into a single output file.
         
-        Если есть видео/GIF, рендерит .mp4 с длительностью самого длинного видео.
-        Если только картинки, рендерит один .png.
+        If video or GIF is present, renders an MP4 video matching the duration of the longest track.
+        If only static images are provided, renders a single PNG image.
         
         Args:
-            zones: Список зон, каждая с ключами: row, col, rowSpan, colSpan, media.
-            rows: Количество строк в сетке.
-            cols: Количество колонок в сетке.
+            zones: List of zone dictionaries with keys: row, col, rowSpan, colSpan, media.
+            rows: Number of grid rows.
+            cols: Number of grid columns.
             
         Returns:
-            str: Путь к итоговому файлу (mp4/png). Возвращает пустую строку при ошибке.
+            str: Path to output media file (mp4 or png). Returns empty string on failure.
         """
-        
-        # Очищаем старый мусор с диска ПК перед новым рендером
         self._cleanup_old_scenes()
         
         if not zones:
@@ -103,13 +103,12 @@ class FFmpegRenderer:
         safe_w = max(1, cols * panel_w)
         safe_h = max(1, rows * panel_h)
         
-        # Определяем, есть ли видео/GIF среди медиа
+        # Check if any zone contains video or animated GIF
         has_video = any(
             Path(z["media"]).suffix.lower() in _VIDEO_LIKE_EXTENSIONS 
             for z in zones
         )
         
-        # Определяем максимальную длительность и FPS
         max_duration = 0.0
         target_fps = _DEFAULT_FPS
         
@@ -130,16 +129,15 @@ class FFmpegRenderer:
                     if has_audio_stream(z["media"]):
                         audio_inputs.append(i)
             
-            # Целевой FPS = максимальный из источников, но не более лимита
+            # Target FPS: highest source FPS, capped at _MAX_OUTPUT_FPS
             if fps_values:
                 target_fps = min(max(fps_values), _MAX_OUTPUT_FPS)
             
-            # Минимальная длительность
             if max_duration <= 0:
                 max_duration = 15.0
                 
             logger.info(
-                "Видео-сцена: длительность=%.1f сек, FPS=%.1f", 
+                "Video scene: duration=%.1f s, FPS=%.1f", 
                 max_duration, target_fps
             )
         
@@ -150,27 +148,24 @@ class FFmpegRenderer:
         from src.core.ffmpeg_manager import get_ffmpeg_path
         cmd = [get_ffmpeg_path(), "-y"]
         
-        # Добавляем инпуты
+        # Add input streams
         for z in zones:
             media = str(z["media"])
             media_ext = Path(media).suffix.lower()
             
             if media_ext in _VIDEO_LIKE_EXTENSIONS:
                 if media_ext == ".gif":
-                    # GIF: зацикливаем и декодируем все кадры
                     cmd.extend(["-ignore_loop", "0"])
-                # Видео/GIF — обычный вход
             else:
-                # Картинка в видео-сцене
                 if has_video:
                     cmd.extend(["-loop", "1", "-framerate", str(int(target_fps))])
                     
             cmd.extend(["-i", media])
             
-        # Формируем filter_complex
+        # Build filter_complex
         filters = []
         
-        # Базовый фон с правильным FPS
+        # Solid black canvas background
         if has_video:
             filters.append(
                 f"color=c=black:s={safe_w}x{safe_h}"
@@ -179,15 +174,12 @@ class FFmpegRenderer:
         else:
             filters.append(f"color=c=black:s={safe_w}x{safe_h}[bg]")
         
-        # Масштабирование и нормализация FPS инпутов
+        # Scale and normalize frame rates for inputs
         for i, z in enumerate(zones):
             target_w = z["colSpan"] * panel_w
             target_h = z["rowSpan"] * panel_h
-            media_ext = Path(z["media"]).suffix.lower()
             
             if has_video:
-                # Нормализуем все потоки к единому FPS + масштабирование
-                # setpts=PTS-STARTPTS сбрасывает временные метки, чтобы overlay был синхронизирован
                 filters.append(
                     f"[{i}:v]fps={int(target_fps)},"
                     f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
@@ -200,7 +192,7 @@ class FFmpegRenderer:
                     f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black@0[v{i}]"
                 )
             
-        # Наложение (overlay)
+        # Overlay zones on top of background
         prev_bg = "bg"
         for i, z in enumerate(zones):
             x = z["col"] * panel_w
@@ -208,7 +200,6 @@ class FFmpegRenderer:
             out_name = f"out{i}" if i < len(zones) - 1 else "final_out"
             
             if has_video:
-                # eof_action=pass: когда поток заканчивается, последний кадр остаётся
                 filters.append(
                     f"[{prev_bg}][v{i}]overlay=x={x}:y={y}:format=rgb"
                     f":eof_action=pass[{out_name}]"
@@ -220,8 +211,7 @@ class FFmpegRenderer:
             prev_bg = out_name
             
         if has_video:
-            # Сначала применяем очистку шума (в RGB пространстве),
-            # затем конвертируем обратно в YUV PC Range
+            # Color matrix processing
             if config.CRUSH_BLACKS:
                 filters.append(
                     "[final_out]colorlevels=rimin=0.05:gimin=0.05:bimin=0.05,"
@@ -237,7 +227,6 @@ class FFmpegRenderer:
             filters.append(f"{amix_inputs}amix=inputs={len(audio_inputs)}:duration=longest[a_out]")
             
         filter_str = ";".join(filters)
-        
         cmd.extend(["-filter_complex", filter_str])
         
         if has_video:
@@ -248,11 +237,11 @@ class FFmpegRenderer:
             cmd.extend([
                 "-c:v", "libx264",
                 "-preset", "fast",
-                "-crf", "18",           # Высокое качество
+                "-crf", "18",
                 "-pix_fmt", "yuv420p",
-                "-r", str(int(target_fps)),  # Явный выходной FPS
-                "-movflags", "+faststart",    # Быстрый старт для стриминга
-                "-color_primaries", "bt709",  # Точная передача цвета
+                "-r", str(int(target_fps)),
+                "-movflags", "+faststart",
+                "-color_primaries", "bt709",
                 "-color_trc", "bt709",
                 "-colorspace", "bt709",
                 "-color_range", "pc"
@@ -262,7 +251,7 @@ class FFmpegRenderer:
                 cmd.extend([
                     "-maxrate", "4M",
                     "-bufsize", "8M",
-                    "-g", str(int(target_fps))  # GOP = FPS (опорный кадр каждую секунду)
+                    "-g", str(int(target_fps))
                 ])
         else:
             cmd.extend(["-map", "[final_out]"])
@@ -270,9 +259,8 @@ class FFmpegRenderer:
             
         cmd.append(output_file)
         
-        logger.info("Запуск FFmpeg: %s", " ".join(cmd))
+        logger.info("Executing FFmpeg command: %s", " ".join(cmd))
         
-        # Запуск процесса
         process = subprocess.run(
             cmd, 
             stdout=subprocess.PIPE, 
@@ -290,8 +278,8 @@ class FFmpegRenderer:
 
     def optimize_single_video(self, input_path: str) -> str:
         """
-        Оптимизирует одиночное видео под размеры и требования LED-панели.
-        Применяет те же настройки, что и render_scene (если включены в конфиге).
+        Optimizes a single video file to match hardware LED dimensions.
+        Applies configured optimizations (FPS limit, color range, letterboxing).
         """
         self._cleanup_old_scenes()
         
@@ -307,9 +295,6 @@ class FFmpegRenderer:
         fps = get_media_fps(input_path)
         target_fps = min(fps if fps > 0 else _DEFAULT_FPS, _MAX_OUTPUT_FPS)
         
-        # Настраиваем видео-фильтр
-        # Используем подложку из чисто черного цвета, чтобы прозрачные GIF 
-        # не получали белый фон после отбрасывания альфа-канала.
         fc_list = [
             f"color=c=black:s={target_w}x{target_h}[bg]",
             f"[0:v]fps={int(target_fps)},scale={target_w}:{target_h}:force_original_aspect_ratio=decrease[fg]",
@@ -323,7 +308,6 @@ class FFmpegRenderer:
             fc_list.append(f"[out]{color_matrix}[color_out]")
             
         filter_str = ";".join(fc_list)
-        
         cmd.extend(["-filter_complex", filter_str, "-map", "[color_out]"])
 
         cmd.extend([
@@ -354,10 +338,13 @@ class FFmpegRenderer:
         cmd.append(output_file)
             
         try:
-            logger.info("Запуск FFmpeg для оптимизации видео: %s", input_path)
-            subprocess.run(cmd, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
-            logger.info("Видео успешно оптимизировано: %s", output_file)
+            logger.info("Executing FFmpeg single video optimization: %s", input_path)
+            kwargs = {}
+            if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            subprocess.run(cmd, check=True, **kwargs)
+            logger.info("Video successfully optimized: %s", output_file)
             return output_file
         except subprocess.CalledProcessError as e:
-            logger.error("Ошибка FFmpeg (оптимизация): %s", e)
+            logger.error("FFmpeg optimization error: %s", e)
             return ""

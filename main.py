@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-main.py — Точка входа приложения Kystar KD6 LED Control Panel.
+main.py — Entry point for Kystar KD6 LED Control Panel application.
 
-Запуск:
+Execution:
     python main.py
 
-Зависимости:
+Dependencies:
     pip install PyQt6 requests
 """
 
@@ -19,7 +20,7 @@ from src.ui.main_window import MainWindow
 from src.ui.styles import STYLESHEET
 
 # ====================================================================
-# НАСТРОЙКА ЛОГИРОВАНИЯ
+# LOGGING CONFIGURATION
 # ====================================================================
 logging.basicConfig(
     level=logging.INFO,
@@ -30,8 +31,15 @@ logging.basicConfig(
 
 def main() -> None:
     """
-    Инициализирует и запускает приложение PyQt6.
+    Initializes and launches the PyQt6 application.
     """
+    if "-h" in sys.argv or "--help" in sys.argv:
+        print("Usage: python main.py [OPTIONS]")
+        print("\nOptions:")
+        print("  -h, --help           Show this help message and exit")
+        print("  --run-obd-scanner    Launch standalone OBD-II Diagnostics & CAN Scanner")
+        sys.exit(0)
+
     if "--run-obd-scanner" in sys.argv:
         from src.ui.obd_gui_qt import OBDDashboardQT
         app = QApplication(sys.argv)
@@ -39,13 +47,13 @@ def main() -> None:
         window.show()
         sys.exit(app.exec())
 
-    # Создаём экземпляр приложения Qt
+    # Create Qt application instance
     app = QApplication(sys.argv)
 
-    # Применяем глобальные стили Dark Mode из styles.py
+    # Apply global Dark Mode styles from styles.py
     app.setStyleSheet(STYLESHEET)
 
-    # Проверка наличия FFmpeg
+    # Check for FFmpeg availability
     from src.core.ffmpeg_manager import is_ffmpeg_available
     if not is_ffmpeg_available():
         from PyQt6.QtWidgets import QMessageBox
@@ -53,10 +61,10 @@ def main() -> None:
         
         reply = QMessageBox.question(
             None, 
-            "Отсутствует FFmpeg", 
-            "Для работы многозонного режима (визуальный редактор) требуется видеодвижок FFmpeg.\n"
-            "К сожалению, он не найден на вашем компьютере.\n\n"
-            "Скачать и установить его автоматически сейчас? (Около 130 МБ)",
+            "FFmpeg Missing", 
+            "Multi-zone layout mode (visual editor) requires the FFmpeg video engine.\n"
+            "Unfortunately, it was not found on your system.\n\n"
+            "Would you like to download and install it automatically now? (~130 MB)",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes
         )
@@ -67,16 +75,15 @@ def main() -> None:
         else:
             QMessageBox.warning(
                 None, 
-                "Ограниченный режим", 
-                "Программа будет запущена, но функции визуального редактора могут не работать."
+                "Limited Mode", 
+                "The application will start, but visual editor compositing features may not function."
             )
 
-    # Создаём и отображаем главное окно
+    # Instantiate and display main window
     window = MainWindow()
     window.show()
 
-    # Запускаем основной цикл обработки событий Qt
-    # sys.exit() гарантирует корректный код возврата ОС
+    # Start main Qt event loop
     sys.exit(app.exec())
 
 

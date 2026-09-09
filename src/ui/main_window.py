@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
+from __future__ import annotations
 """
-main_window.py — Главное окно приложения Kystar KD6 Control Panel.
+main_window.py — Main window of the Kystar KD6 Control Panel application.
 
-Этот модуль содержит ТОЛЬКО UI-логику PyQt6:
-- Создание и компоновку виджетов
-- Обработку событий пользователя (клики, Drag-and-Drop, слайдер)
-- Запуск рабочих потоков для сетевых операций
-- Обновление UI по сигналам от воркеров
+This module contains ONLY PyQt6 UI logic:
+- Widget creation and layout assembly
+- User event handling (clicks, Drag-and-Drop, sliders)
+- Worker thread lifecycle management for network operations
+- UI updates responding to worker signals
 
-Вся сетевая логика делегирована модулям kystar_client.py и workers.py.
+All network communication logic is delegated to kystar_client.py and workers.py.
 """
 
 import logging
@@ -16,14 +17,19 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, QUrl, QSize
+from PyQt6.QtCore import QSize, Qt, QTimer, QUrl
 from PyQt6.QtGui import QColor, QDragEnterEvent, QDropEvent, QIcon, QPixmap
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
     QFileDialog,
+    QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -32,73 +38,81 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QSpinBox,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    QInputDialog,
-    QDialog,
-    QFormLayout,
-    QTabWidget,
-    QSizePolicy,
-    QCheckBox,
 )
 
 from src.core.config import (
     ALLOWED_EXTENSIONS,
+    AUTO_GRID,
+    AUTO_OPTIMIZE_VIDEO,
     BRIGHTNESS_DEBOUNCE_MS,
+    CONNECTION_MODE,
+    CRUSH_BLACKS,
     DEVICE_IP,
     IMAGE_EXTENSIONS,
-    PING_INTERVAL_MS,
-    VIDEO_EXTENSIONS,
-    screen_config,
-    save_hardware_config,
-    PANEL_WIDTH,
+    LIMIT_BITRATE,
     PANEL_HEIGHT,
+    PANEL_WIDTH,
+    PING_INTERVAL_MS,
+    SCREEN_COLS,
+    SCREEN_ROWS,
+    VIDEO_EXTENSIONS,
+    get_current_urls,
+    save_hardware_config,
+    screen_config,
 )
 from src.core.kystar_client import KystarClient
-from src.core.playlists_manager import PlaylistsManager
 from src.core.media_utils import (
-    get_video_thumbnail_bytes,
     IMAGE_THUMBNAIL_EXTENSIONS,
     VIDEO_THUMBNAIL_EXTENSIONS,
+    get_video_thumbnail_bytes,
 )
-from src.ui.scene_editor import SceneEditor
+from src.core.playlists_manager import PlaylistsManager
 from src.ui.device_media_dialog import DeviceMediaDialog
 from src.ui.dynamic_video_tab import DynamicVideoTab
+from src.ui.scene_editor import SceneEditor
 from src.ui.styles import DROP_ZONE_HOVER_STYLE, DROP_ZONE_STYLE
 from src.ui.workers import (
     BrightnessWorker,
+    ClearMemoryWorker,
+    PingPongWorker,
     PingWorker,
     RebootWorker,
     ScreenPowerWorker,
     UploadMediaWorker,
 )
+
 logger = logging.getLogger(__name__)
 
 
 class DropZoneLabel(QLabel):
     """
-    Виджет-зона для Drag-and-Drop файлов.
+    Drag-and-Drop file landing zone widget.
 
-    Принимает перетаскиваемые файлы с расширениями из ALLOWED_EXTENSIONS.
-    При наведении файлов подсвечивает зону неоновой рамкой.
+    Accepts dropped files matching ALLOWED_EXTENSIONS.
+    Highlights border with neon glow upon drag hover.
     """
 
     def __init__(self, parent: "MainWindow") -> None:
         super().__init__(parent)
         self.main_window = parent
         self.setObjectName("drop_zone")
-        self.setText("📁  Перетащите медиафайлы сюда\nили нажмите для выбора")
+        self.setText("📁  Drag & Drop media files here\nor click to browse")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet(DROP_ZONE_STYLE)
         self.setAcceptDrops(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """Подсвечиваем зону при наведении файлов."""
+        """Highlights drop zone on drag hover."""
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             self.setStyleSheet(DROP_ZONE_HOVER_STYLE)
@@ -106,11 +120,11 @@ class DropZoneLabel(QLabel):
             event.ignore()
 
     def dragLeaveEvent(self, event) -> None:
-        """Снимаем подсветку при уходе курсора."""
+        """Restores default styling when cursor leaves."""
         self.setStyleSheet(DROP_ZONE_STYLE)
 
     def dropEvent(self, event: QDropEvent) -> None:
-        """Обрабатываем сброшенные файлы."""
+        """Processes dropped files."""
         self.setStyleSheet(DROP_ZONE_STYLE)
         urls = event.mimeData().urls()
         file_paths: list[str] = []
@@ -120,65 +134,65 @@ class DropZoneLabel(QLabel):
             if ext in ALLOWED_EXTENSIONS:
                 file_paths.append(path)
             else:
-                self.main_window.log(f"⚠ Пропущен неподдерживаемый файл: {Path(path).name}")
+                self.main_window.log(f"⚠ Skipped unsupported file: {Path(path).name}")
         if file_paths:
             self.main_window.add_media_files(file_paths)
         event.acceptProposedAction()
 
     def mousePressEvent(self, event) -> None:
-        """Открываем диалог выбора файлов при клике."""
+        """Opens file selection dialog on click."""
         self.main_window.open_file_dialog()
 
 
 class MainWindow(QMainWindow):
     """
-    Главное окно приложения управления LED-экраном Kystar KD6.
+    Main application window for Kystar KD6 LED display control.
     """
 
     def __init__(self) -> None:
         super().__init__()
 
-        # Инициализация API-клиента (без сетевых вызовов в конструкторе)
+        # Initialize API client (no synchronous network calls in constructor)
         self.client = KystarClient()
 
-        # Список рабочих потоков для предотвращения сборки мусора
+        # Active worker threads registry to prevent GC collection
         self._active_workers: list = []
 
-        # База данных плейлистов
+        # Playlists manager
         self.playlists_manager = PlaylistsManager()
         self.current_program_id = None
 
-        # Таймер debounce для слайдера яркости
+        # Debounce timer for brightness slider
         self._brightness_timer = QTimer()
         self._brightness_timer.setSingleShot(True)
         self._brightness_timer.setInterval(BRIGHTNESS_DEBOUNCE_MS)
         self._brightness_timer.timeout.connect(self._send_brightness)
 
-        # Последнее значение яркости для debounce
+        # Pending brightness value for debounce
         self._pending_brightness: int = 100
 
-        # Текущее состояние экрана
+        # Current screen power state
         self._screen_on: bool = True
 
         self._setup_ui()
         self._start_ping_worker()
 
     # ================================================================
-    # НАСТРОЙКА ИНТЕРФЕЙСА
+    # UI SETUP & COMPOSITION
     # ================================================================
 
     def _setup_ui(self) -> None:
-        """Создаёт и компонует все UI-элементы."""
+        """Builds and composes all UI widgets."""
         self.setWindowTitle("Kystar KD6 — LED Control Panel")
-        
-        # Установка иконки приложения
+
+        # Application icon setup
         logo_path = Path(__file__).parent / "logo.png"
         if logo_path.exists():
             self.setWindowIcon(QIcon(str(logo_path)))
         self.setMinimumSize(900, 700)
         self.resize(1000, 900)
 
-        # Центральный виджет
+        # Central widget
         central_widget = QWidget()
         root_layout = QHBoxLayout(central_widget)
         root_layout.setContentsMargins(20, 12, 20, 20)
@@ -191,63 +205,63 @@ class MainWindow(QMainWindow):
         self.main_container.setSpacing(12)
         root_layout.addLayout(self.main_container, stretch=1)
 
-        # --- Секция плейлистов (слева) ---
+        # --- Playlists Section (Left Sidebar) ---
         self._create_playlists_section()
 
-        # Создаем табы
+        # Tabs container
         self.tabs = QTabWidget()
         self.main_container.addWidget(self.tabs)
 
         self.tab_simple = QWidget()
         self.tab_simple_layout = QVBoxLayout(self.tab_simple)
-        self.tabs.addTab(self.tab_simple, "Простой режим (Плейлисты)")
+        self.tabs.addTab(self.tab_simple, "Simple Mode (Playlists)")
 
         self.tab_scene = QWidget()
         self.tab_scene_layout = QVBoxLayout(self.tab_scene)
-        self.tabs.addTab(self.tab_scene, "Визуальный редактор зон (Multi-layer)")
+        self.tabs.addTab(self.tab_scene, "Multi-Zone Scene Editor (Multi-layer)")
 
         self.tab_dynamic_video = DynamicVideoTab(self)
-        self.tabs.addTab(self.tab_dynamic_video, "Динамическое видео")
+        self.tabs.addTab(self.tab_dynamic_video, "Dynamic Video")
 
-        # --- Заголовок ---
+        # --- Header ---
         self._create_header()
 
-        # --- Секция медиа ---
+        # --- Media Library Section ---
         self._create_media_section()
 
-        # --- Секция яркости ---
+        # --- Brightness Section ---
         self._create_brightness_section()
 
-        # --- Секция управления ---
+        # --- Device Controls Section ---
         self._create_control_section()
 
-        # --- Добавляем Редактор Сцен ---
+        # --- Multi-Zone Scene Editor ---
         self.scene_editor = SceneEditor(self)
         self.scene_editor.render_completed.connect(self._on_render_completed)
         self.tab_scene_layout.addWidget(self.scene_editor)
 
-        # --- Лог событий ---
+        # --- Event Log ---
         self._create_log_section()
 
         self.setCentralWidget(central_widget)
 
-        # Приветственное сообщение
-        self.log("✦ Kystar KD6 Control Panel запущен")
-        self.log(f"  Устройство: {DEVICE_IP}")
+        # Welcome message
+        self.log("✦ Kystar KD6 Control Panel started")
+        self.log(f"  Device: {DEVICE_IP}")
 
-        # Загружаем плейлисты только после создания всех виджетов
+        # Refresh programs after widgets are ready
         self._refresh_programs_list()
 
     def _create_playlists_section(self) -> None:
-        """Создаёт секцию управления плейлистами слева."""
+        """Creates the playlist management sidebar on the left."""
         group = QWidget()
         group.setObjectName("card")
         group.setMaximumWidth(280)
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
-        
-        title = QLabel("Программы (Плейлисты)")
+
+        title = QLabel("Programs (Playlists)")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
 
@@ -256,86 +270,85 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.list_programs)
 
         btn_row = QHBoxLayout()
-        self.btn_add_program = QPushButton("Создать")
+        self.btn_add_program = QPushButton("New")
         self.btn_add_program.setObjectName("btn_ghost")
         self.btn_add_program.clicked.connect(self._on_add_program)
         btn_row.addWidget(self.btn_add_program)
 
-        self.btn_rename_program = QPushButton("Имя")
+        self.btn_rename_program = QPushButton("Rename")
         self.btn_rename_program.setObjectName("btn_ghost")
         self.btn_rename_program.clicked.connect(self._on_rename_program)
         btn_row.addWidget(self.btn_rename_program)
 
-        self.btn_delete_program = QPushButton("Удалить")
+        self.btn_delete_program = QPushButton("Delete")
         self.btn_delete_program.setObjectName("btn_delete")
         self.btn_delete_program.clicked.connect(self._on_delete_program)
         btn_row.addWidget(self.btn_delete_program)
 
         layout.addLayout(btn_row)
         group.setLayout(layout)
-        
-        # Разрешаем группе растягиваться
+
         group.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.left_layout.addWidget(group)
 
-        self.btn_hardware_settings = QPushButton("Настройки оборудования")
+        self.btn_hardware_settings = QPushButton("Hardware & Connection Settings")
         self.btn_hardware_settings.setObjectName("btn_ghost")
         self.btn_hardware_settings.clicked.connect(self._on_hardware_settings)
         self.left_layout.addWidget(self.btn_hardware_settings)
 
     def _create_header(self) -> None:
-        """Создаёт заголовок с названием и индикатором статуса."""
+        """Creates header title and device online/offline indicator."""
         header_layout = QHBoxLayout()
         title_label = QLabel("KYSTAR KD6 CONTROL")
         title_label.setObjectName("label_title")
         header_layout.addWidget(title_label)
         header_layout.addStretch()
-        self.status_indicator = QLabel("●  Проверка...")
+        self.status_indicator = QLabel("●  Checking...")
         self.status_indicator.setObjectName("label_status_offline")
         header_layout.addWidget(self.status_indicator)
         self.tab_simple_layout.addLayout(header_layout)
 
     def _create_media_section(self) -> None:
-        """Создаёт секцию медиабиблиотеки с Drag-and-Drop."""
+        """Creates media library section with Drag-and-Drop."""
         group = QWidget()
         group.setObjectName("card")
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 16, 16, 16)
-        
-        title = QLabel("Медиабиблиотека")
+
+        title = QLabel("Media Library")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
-        
+
         self.drop_zone = DropZoneLabel(self)
         layout.addWidget(self.drop_zone)
         self.media_list = QListWidget()
         self.media_list.setIconSize(QSize(64, 64))
         self.media_list.itemDoubleClicked.connect(self._on_remove_media_item)
         layout.addWidget(self.media_list)
-        
+
         btn_row = QHBoxLayout()
-        self.btn_add_files = QPushButton("Добавить файлы")
+        self.btn_add_files = QPushButton("Add Files")
         self.btn_add_files.setObjectName("btn_ghost")
         self.btn_add_files.clicked.connect(self.open_file_dialog)
         btn_row.addWidget(self.btn_add_files)
-        
-        self.btn_clear_list = QPushButton("Очистить список")
+
+        self.btn_clear_list = QPushButton("Clear List")
         self.btn_clear_list.setObjectName("btn_ghost")
         self.btn_clear_list.clicked.connect(self._on_clear_media_list)
         btn_row.addWidget(self.btn_clear_list)
         layout.addLayout(btn_row)
 
         play_row = QHBoxLayout()
-        self.btn_play_media = QPushButton("Воспроизвести на LED")
+        self.btn_play_media = QPushButton("Play on LED")
         self.btn_play_media.setObjectName("btn_primary")
         self.btn_play_media.clicked.connect(self._on_play_media)
         play_row.addWidget(self.btn_play_media, stretch=2)
 
-        play_row.addWidget(QLabel("Длительность фото:"))
+        play_row.addWidget(QLabel("Photo Duration:"))
         self.spin_image_duration = QSpinBox()
         self.spin_image_duration.setRange(1, 3600)
         self.spin_image_duration.setValue(5)
-        self.spin_image_duration.setSuffix(" с")
+        self.spin_image_duration.setSuffix(" s")
         play_row.addWidget(self.spin_image_duration, stretch=1)
         layout.addLayout(play_row)
 
@@ -343,28 +356,28 @@ class MainWindow(QMainWindow):
         self.upload_progress = QProgressBar()
         self.upload_progress.setVisible(False)
         progress_layout.addWidget(self.upload_progress)
-        
-        self.btn_cancel_upload = QPushButton("Отмена")
+
+        self.btn_cancel_upload = QPushButton("Cancel")
         self.btn_cancel_upload.setObjectName("btn_ghost")
         self.btn_cancel_upload.setVisible(False)
         self.btn_cancel_upload.clicked.connect(self._on_cancel_upload)
         progress_layout.addWidget(self.btn_cancel_upload)
-        
+
         layout.addLayout(progress_layout)
         group.setLayout(layout)
         self.tab_simple_layout.addWidget(group)
 
     def _create_brightness_section(self) -> None:
-        """Создаёт секцию управления яркостью."""
+        """Creates brightness slider control section."""
         group = QWidget()
         group.setObjectName("card")
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 12, 16, 16)
-        
-        title = QLabel("Яркость экрана")
+
+        title = QLabel("Screen Brightness")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
-        
+
         slider_layout = QHBoxLayout()
         self.brightness_slider = QSlider(Qt.Orientation.Horizontal)
         self.brightness_slider.setRange(0, 100)
@@ -375,80 +388,80 @@ class MainWindow(QMainWindow):
         self.brightness_value_label.setObjectName("label_brightness_value")
         slider_layout.addWidget(self.brightness_value_label)
         layout.addLayout(slider_layout)
-        
+
         group.setLayout(layout)
         self.tab_simple_layout.addWidget(group)
 
     def _create_control_section(self) -> None:
-        """Создаёт секцию управления устройством."""
+        """Creates hardware control section."""
         group = QWidget()
         group.setObjectName("card")
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 12, 16, 16)
-        
-        title = QLabel("Управление устройством")
+
+        title = QLabel("Device Controls")
         title.setObjectName("label_section_title")
         layout.addWidget(title)
-        
+
         btn_layout = QHBoxLayout()
-        self.btn_screen_power = QPushButton("⏻  Экран вкл / выкл")
+        self.btn_screen_power = QPushButton("⏻  Screen ON / OFF")
         self.btn_screen_power.setObjectName("btn_ghost")
         self.btn_screen_power.clicked.connect(self._on_toggle_screen)
         btn_layout.addWidget(self.btn_screen_power)
-        
-        self.btn_reboot = QPushButton("↻  Перезагрузка")
+
+        self.btn_reboot = QPushButton("↻  Reboot")
         self.btn_reboot.setObjectName("btn_reboot")
         self.btn_reboot.clicked.connect(self._on_reboot)
         btn_layout.addWidget(self.btn_reboot)
-        
-        self.btn_clear_memory = QPushButton("⌫  Очистить память")
+
+        self.btn_clear_memory = QPushButton("⌫  Clear Storage")
         self.btn_clear_memory.setObjectName("btn_ghost")
         self.btn_clear_memory.clicked.connect(self._on_clear_memory)
         btn_layout.addWidget(self.btn_clear_memory)
-        
-        self.btn_device_media = QPushButton("▤  Медиа на плеере")
+
+        self.btn_device_media = QPushButton("▤  Device Media")
         self.btn_device_media.setObjectName("btn_ghost")
         self.btn_device_media.clicked.connect(self._on_show_device_media)
         btn_layout.addWidget(self.btn_device_media)
-        
+
         layout.addLayout(btn_layout)
         group.setLayout(layout)
         self.tab_simple_layout.addWidget(group)
 
     def _create_log_section(self) -> None:
-        """Создаёт сворачиваемую панель лога событий."""
+        """Creates collapsible event log panel."""
         self.log_container = QWidget()
         log_layout = QVBoxLayout(self.log_container)
         log_layout.setContentsMargins(0, 0, 0, 0)
         log_layout.setSpacing(4)
-        
-        self.btn_toggle_logs = QPushButton("▶  Показать лог событий")
+
+        self.btn_toggle_logs = QPushButton("▶  Show Event Log")
         self.btn_toggle_logs.setObjectName("btn_toggle_logs")
         self.btn_toggle_logs.setCheckable(True)
         self.btn_toggle_logs.setChecked(False)
         self.btn_toggle_logs.clicked.connect(self._toggle_logs)
-        
+
         self.log_panel = QTextEdit()
         self.log_panel.setObjectName("log_panel")
         self.log_panel.setReadOnly(True)
         self.log_panel.setVisible(False)
         self.log_panel.setMaximumHeight(120)
-        
+
         log_layout.addWidget(self.btn_toggle_logs)
         log_layout.addWidget(self.log_panel)
-        
+
         self.main_container.addWidget(self.log_container)
 
     def _toggle_logs(self, checked: bool) -> None:
-        """Сворачивает или разворачивает лог событий."""
+        """Expands or collapses the event log panel."""
         self.log_panel.setVisible(checked)
         if checked:
-            self.btn_toggle_logs.setText("▼  Скрыть лог событий")
+            self.btn_toggle_logs.setText("▼  Hide Event Log")
         else:
-            self.btn_toggle_logs.setText("▶  Показать лог событий")
+            self.btn_toggle_logs.setText("▶  Show Event Log")
 
     # ================================================================
-    # ФОНОВЫЙ ПИНГ УСТРОЙСТВА
+    # BACKGROUND DEVICE PING
     # ================================================================
 
     def _start_ping_worker(self) -> None:
@@ -463,78 +476,71 @@ class MainWindow(QMainWindow):
         self.brightness_slider.setValue(value)
         self.brightness_value_label.setText(f"{value}%")
         self.brightness_slider.blockSignals(False)
-        self.log(f"Текущая яркость синхронизирована с устройством: {value}%")
+        self.log(f"Current brightness synchronized with device: {value}%")
 
     def _on_grid_updated(self) -> None:
-        self.log("Сетка экранов обновлена на основе данных от устройства")
+        self.log("Screen grid updated based on device telemetry")
         self.scene_editor.refresh_grid()
 
     def _on_status_changed(self, is_online: bool) -> None:
         if is_online:
-            self.status_indicator.setText("●  Онлайн")
+            self.status_indicator.setText("●  Online")
             self.status_indicator.setObjectName("label_status_online")
         else:
-            self.status_indicator.setText("●  Оффлайн")
+            self.status_indicator.setText("●  Offline")
             self.status_indicator.setObjectName("label_status_offline")
-            
+
         self.status_indicator.style().unpolish(self.status_indicator)
         self.status_indicator.style().polish(self.status_indicator)
 
     def _on_hardware_settings(self) -> None:
-        from src.core.config import SCREEN_COLS, SCREEN_ROWS, AUTO_GRID, AUTO_OPTIMIZE_VIDEO, CRUSH_BLACKS, LIMIT_BITRATE, CONNECTION_MODE, get_current_urls
         dialog = QDialog(self)
-        dialog.setWindowTitle("Настройки оборудования и подключения")
+        dialog.setWindowTitle("Hardware & Connection Settings")
         dialog.setMinimumWidth(550)
-        dialog.resize(600, 650) # Устанавливаем высоту по умолчанию, но она может сжиматься
-        
+        dialog.resize(600, 650)
+
         main_layout = QVBoxLayout(dialog)
         main_layout.setSpacing(8)
         main_layout.setContentsMargins(0, 0, 0, 8)
-        
-        from PyQt6.QtWidgets import QScrollArea, QWidget, QFrame
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        
+
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
         scroll_layout.setSpacing(16)
         scroll_layout.setContentsMargins(16, 16, 16, 16)
-        
-        # Группа 0: Подключение к плееру
-        group_net = QGroupBox("Тип подключения к LED-плееру")
+
+        # Group 0: Connection Mode
+        group_net = QGroupBox("LED Player Connection Type")
         layout_net = QVBoxLayout(group_net)
         layout_net.setContentsMargins(16, 20, 16, 16)
         layout_net.setSpacing(12)
-        
-        from PyQt6.QtWidgets import QRadioButton, QHBoxLayout
-        
+
         radio_layout = QHBoxLayout()
-        rb_lan = QRadioButton("LAN (Сетевой кабель)")
-        rb_wifi = QRadioButton("Wi-Fi (Точка доступа KU6)")
-        
+        rb_lan = QRadioButton("LAN (Ethernet Cable)")
+        rb_wifi = QRadioButton("Wi-Fi (KU6 Access Point)")
+
         if CONNECTION_MODE == "WIFI":
             rb_wifi.setChecked(True)
         else:
             rb_lan.setChecked(True)
-            
+
         radio_layout.addWidget(rb_lan)
         radio_layout.addWidget(rb_wifi)
         layout_net.addLayout(radio_layout)
-        
-        btn_connect_wifi = QPushButton("Подключиться к Wi-Fi плеера (Автоматически)")
+
+        btn_connect_wifi = QPushButton("Connect to Player Wi-Fi (Automatic)")
         btn_connect_wifi.setObjectName("btn_ghost")
-        
-        # Функция для генерации профиля и подключения к Wi-Fi
+
         def _connect_to_wifi():
             import subprocess
             import tempfile
-            import os
-            from PyQt6.QtWidgets import QMessageBox
-            
+
             ssid = "KU6-26050021"
             password = "26050021"
-            
+
             profile_xml = f"""<?xml version="1.0"?>
 <WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">
     <name>{ssid}</name>
@@ -565,31 +571,45 @@ class MainWindow(QMainWindow):
                 xml_path = os.path.join(temp_dir, f"{ssid}.xml")
                 with open(xml_path, "w", encoding="utf-8") as f:
                     f.write(profile_xml)
-                
-                # Добавляем профиль
-                subprocess.run(["netsh", "wlan", "add", "profile", f"filename={xml_path}"], check=True, capture_output=True)
-                # Подключаемся
-                subprocess.run(["netsh", "wlan", "connect", f"name={ssid}"], check=True, capture_output=True)
-                
-                QMessageBox.information(dialog, "Подключение", f"Windows отправлена команда на подключение к Wi-Fi: {ssid}.\nПожалуйста, подождите пару секунд, пока Windows установит соединение.")
-                rb_wifi.setChecked(True) # Автоматически переключаем режим
+
+                subprocess.run(
+                    ["netsh", "wlan", "add", "profile", f"filename={xml_path}"],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["netsh", "wlan", "connect", f"name={ssid}"],
+                    check=True,
+                    capture_output=True,
+                )
+
+                QMessageBox.information(
+                    dialog,
+                    "Connection",
+                    f"Command sent to connect to Wi-Fi: {ssid}.\nPlease wait a few seconds while connection is established.",
+                )
+                rb_wifi.setChecked(True)
             except Exception as e:
-                QMessageBox.warning(dialog, "Ошибка", f"Не удалось автоматически подключиться к Wi-Fi. Возможно, программе требуются права Администратора.\n\nВы можете просто подключиться вручную через меню Windows в правом нижнем углу.\n\nКод: {e}")
-                
+                QMessageBox.warning(
+                    dialog,
+                    "Error",
+                    f"Failed to automatically connect to Wi-Fi. Administrator privileges may be required.\n\nYou can manually connect via the OS Wi-Fi menu.\n\nCode: {e}",
+                )
+
         btn_connect_wifi.clicked.connect(_connect_to_wifi)
         layout_net.addWidget(btn_connect_wifi)
-        
+
         scroll_layout.addWidget(group_net)
-        
-        # Группа 1: Сетка экранов
-        group_grid = QGroupBox("Сетка LED-панелей")
+
+        # Group 1: LED Panel Grid
+        group_grid = QGroupBox("LED Panel Grid")
         layout_grid = QFormLayout(group_grid)
         layout_grid.setContentsMargins(16, 20, 16, 16)
-        
+
         spin_w = QSpinBox()
         spin_w.setRange(10, 2000)
         spin_w.setValue(PANEL_WIDTH)
-        
+
         spin_h = QSpinBox()
         spin_h.setRange(10, 2000)
         spin_h.setValue(PANEL_HEIGHT)
@@ -605,106 +625,106 @@ class MainWindow(QMainWindow):
         chk_auto = QCheckBox()
         chk_auto.setChecked(AUTO_GRID)
 
-        layout_grid.addRow("Ширина 1 панели (px):", spin_w)
-        layout_grid.addRow("Высота 1 панели (px):", spin_h)
-        layout_grid.addRow("Количество колонок (X):", spin_cols)
-        layout_grid.addRow("Количество строк (Y):", spin_rows)
-        layout_grid.addRow("Автоопределение сетки по холсту:", chk_auto)
-        
+        layout_grid.addRow("Panel Width (px):", spin_w)
+        layout_grid.addRow("Panel Height (px):", spin_h)
+        layout_grid.addRow("Columns (X):", spin_cols)
+        layout_grid.addRow("Rows (Y):", spin_rows)
+        layout_grid.addRow("Auto-detect grid from canvas:", chk_auto)
+
         scroll_layout.addWidget(group_grid)
-        
-        # Группа 2: Оптимизация видео
-        group_opt = QGroupBox("Оптимизация видео (FFmpeg)")
+
+        # Group 2: Video Optimization
+        group_opt = QGroupBox("Video Optimization (FFmpeg)")
         layout_opt = QVBoxLayout(group_opt)
         layout_opt.setContentsMargins(16, 20, 16, 16)
         layout_opt.setSpacing(12)
-        
-        chk_auto_opt = QCheckBox("Автоматически оптимизировать видео в «Простом режиме»")
+
+        chk_auto_opt = QCheckBox("Automatically optimize video in 'Simple Mode'")
         chk_auto_opt.setChecked(AUTO_OPTIMIZE_VIDEO)
-        lbl_auto_opt = QLabel("Сжимает видео под размер экрана перед отправкой, чтобы избежать лагов.")
+        lbl_auto_opt = QLabel("Scales video to canvas dimensions prior to upload to eliminate playback lag.")
         lbl_auto_opt.setWordWrap(True)
         lbl_auto_opt.setStyleSheet("color: gray; font-size: 11px; margin-left: 24px;")
-        
-        chk_crush = QCheckBox("Очищать цифровой шум на черном фоне (Crush Blacks)")
+
+        chk_crush = QCheckBox("Suppress digital noise on dark backgrounds (Crush Blacks)")
         chk_crush.setChecked(CRUSH_BLACKS)
-        lbl_crush = QLabel("Обрезает почти черные пиксели до идеального (0,0,0). Убирает синие/зеленые точки.")
+        lbl_crush = QLabel("Clamps near-black pixels to pure (0,0,0) to eliminate colored pixel artifacts.")
         lbl_crush.setWordWrap(True)
         lbl_crush.setStyleSheet("color: gray; font-size: 11px; margin-left: 24px;")
-        
-        chk_limit = QCheckBox("Оптимизировать битрейт и плавность (GOP 30, Max 4M)")
+
+        chk_limit = QCheckBox("Optimize bitrate and smoothness (GOP 30, Max 4M)")
         chk_limit.setChecked(LIMIT_BITRATE)
-        lbl_limit = QLabel("Снижает нагрузку на процессор контроллера. Включите, если видео «подлагивает».")
+        lbl_limit = QLabel("Reduces controller CPU load. Enable if high-framerate playback stutters.")
         lbl_limit.setWordWrap(True)
         lbl_limit.setStyleSheet("color: gray; font-size: 11px; margin-left: 24px;")
-        
+
         layout_opt.addWidget(chk_auto_opt)
         layout_opt.addWidget(lbl_auto_opt)
         layout_opt.addWidget(chk_crush)
         layout_opt.addWidget(lbl_crush)
         layout_opt.addWidget(chk_limit)
         layout_opt.addWidget(lbl_limit)
-        
+
         scroll_layout.addWidget(group_opt)
-        
-        # Группа 3: Развлечения / Скринсейверы
-        group_fun = QGroupBox("Развлечения / Скринсейверы")
+
+        # Group 3: Entertainment / Screensavers
+        group_fun = QGroupBox("Entertainment / Screensavers")
         layout_fun = QVBoxLayout(group_fun)
         layout_fun.setContentsMargins(16, 20, 16, 16)
-        
-        btn_ping_pong = QPushButton("🏓 Запустить заставку Пинг-Понг")
+
+        btn_ping_pong = QPushButton("🏓 Launch Ping-Pong Screensaver")
         btn_ping_pong.setObjectName("btn_secondary")
         btn_ping_pong.setMinimumHeight(32)
-        
+
         ping_pong_progress = QProgressBar()
         ping_pong_progress.setTextVisible(False)
         ping_pong_progress.setFixedHeight(4)
         ping_pong_progress.setVisible(False)
-        
+
         def _run_ping_pong():
             btn_ping_pong.setEnabled(False)
-            btn_ping_pong.setText("Генерация кадров...")
+            btn_ping_pong.setText("Generating frames...")
             ping_pong_progress.setVisible(True)
             ping_pong_progress.setValue(0)
-            
-            from src.ui.workers import PingPongWorker
+
             self.ping_pong_worker = PingPongWorker(self.client)
-            
+
             def _on_prog(p):
                 ping_pong_progress.setValue(p)
-                if p > 50: btn_ping_pong.setText("Сборка видео (FFmpeg)...")
-                if p > 80: btn_ping_pong.setText("Отправка на LED-экран...")
-                
+                if p > 50:
+                    btn_ping_pong.setText("Assembling video (FFmpeg)...")
+                if p > 80:
+                    btn_ping_pong.setText("Deploying to LED screen...")
+
             def _on_finish(success, msg):
                 btn_ping_pong.setEnabled(True)
-                btn_ping_pong.setText("🏓 Запустить заставку Пинг-Понг")
+                btn_ping_pong.setText("🏓 Launch Ping-Pong Screensaver")
                 ping_pong_progress.setVisible(False)
                 if success:
-                    self.log("Пинг-Понг успешно запущен на экране!")
+                    self.log("Ping-Pong screensaver launched successfully!")
                 else:
-                    self.log(f"Ошибка Пинг-Понг: {msg}")
-                    QMessageBox.warning(dialog, "Ошибка", msg)
-            
+                    self.log(f"Ping-Pong error: {msg}")
+                    QMessageBox.warning(dialog, "Error", msg)
+
             self.ping_pong_worker.progress.connect(_on_prog)
             self.ping_pong_worker.finished.connect(_on_finish)
             self.ping_pong_worker.start()
-            
+
         btn_ping_pong.clicked.connect(_run_ping_pong)
-        
+
         layout_fun.addWidget(btn_ping_pong)
         layout_fun.addWidget(ping_pong_progress)
-        
+
         scroll_layout.addWidget(group_fun)
-        
+
         scroll_area.setWidget(scroll_widget)
         main_layout.addWidget(scroll_area)
 
-        # Кнопка сохранения всегда внизу, не прокручивается
-        btn_save = QPushButton("Сохранить настройки")
+        # Bottom Save Button
+        btn_save = QPushButton("Save Settings")
         btn_save.setObjectName("btn_primary")
         btn_save.setMinimumHeight(40)
         btn_save.clicked.connect(dialog.accept)
-        
-        # Контейнер для кнопки с отступами
+
         btn_layout = QHBoxLayout()
         btn_layout.setContentsMargins(16, 0, 16, 8)
         btn_layout.addWidget(btn_save)
@@ -713,28 +733,26 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             new_mode = "WIFI" if rb_wifi.isChecked() else "LAN"
             save_hardware_config(
-                spin_w.value(), 
-                spin_h.value(), 
-                spin_cols.value(), 
-                spin_rows.value(), 
+                spin_w.value(),
+                spin_h.value(),
+                spin_cols.value(),
+                spin_rows.value(),
                 chk_auto.isChecked(),
                 auto_optimize=chk_auto_opt.isChecked(),
                 crush_blacks=chk_crush.isChecked(),
                 limit_bitrate=chk_limit.isChecked(),
-                connection_mode=new_mode
+                connection_mode=new_mode,
             )
-            self.log(f"Настройки сохранены: {spin_cols.value()}x{spin_rows.value()} (Режим: {new_mode})")
-            
-            # Обновляем адреса клиента и перезапускаем пинг
+            self.log(f"Settings saved: {spin_cols.value()}x{spin_rows.value()} (Mode: {new_mode})")
+
             base_url, reboot_url = get_current_urls()
             self.client.update_urls(base_url, reboot_url)
-            
-            # Обновим сетку
+
             screen_config.update_from_device_info(screen_config.total_width, screen_config.total_height)
             self.scene_editor.refresh_grid()
 
     # ================================================================
-    # ОБРАБОТЧИКИ СОБЫТИЙ: ПРОГРАММЫ (ПЛЕЙЛИСТЫ)
+    # PLAYLIST EVENT HANDLERS
     # ================================================================
 
     def _refresh_programs_list(self) -> None:
@@ -744,7 +762,6 @@ class MainWindow(QMainWindow):
             self.list_programs.addItem(p["name"])
         self.list_programs.blockSignals(False)
 
-        # Выбираем первую программу по умолчанию
         if self.list_programs.count() > 0:
             self.list_programs.setCurrentRow(0)
             self._on_program_selected()
@@ -757,7 +774,10 @@ class MainWindow(QMainWindow):
 
     def _save_current_program_files(self) -> None:
         if self.current_program_id:
-            files = [self.media_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.media_list.count())]
+            files = [
+                self.media_list.item(i).data(Qt.ItemDataRole.UserRole)
+                for i in range(self.media_list.count())
+            ]
             self.playlists_manager.set_program_files(self.current_program_id, files)
 
     def _on_program_selected(self) -> None:
@@ -765,33 +785,29 @@ class MainWindow(QMainWindow):
         if not prog_id:
             return
 
-        # Сохраняем текущие файлы старой программы перед переключением
         self._save_current_program_files()
-
         self.current_program_id = prog_id
-        
+
         self.media_list.clear()
         files = self.playlists_manager.get_program_files(prog_id)
-        from src.core.config import VIDEO_EXTENSIONS
         for f in files:
             path = Path(f)
             ext = path.suffix.lower()
             icon_str = "🎬" if ext in VIDEO_EXTENSIONS else ""
             item = QListWidgetItem(f"{icon_str}  {path.name}".strip())
-            
-            # Миниатюра: картинки напрямую, видео/GIF — через FFmpeg
+
             pixmap = self._get_media_thumbnail(str(path), ext)
             if pixmap:
                 item.setIcon(QIcon(pixmap))
-            
+
             item.setData(Qt.ItemDataRole.UserRole, str(path))
             item.setToolTip(str(path))
             self.media_list.addItem(item)
-        
-        self.log(f"Выбрана программа: {self.list_programs.currentItem().text()}")
+
+        self.log(f"Selected program: {self.list_programs.currentItem().text()}")
 
     def _on_add_program(self) -> None:
-        name, ok = QInputDialog.getText(self, "Новая программа", "Введите название программы:")
+        name, ok = QInputDialog.getText(self, "New Program", "Enter program name:")
         if ok and name.strip():
             self.playlists_manager.add_program(name.strip())
             self._refresh_programs_list()
@@ -802,7 +818,7 @@ class MainWindow(QMainWindow):
         if not prog_id:
             return
         current_name = self.list_programs.currentItem().text()
-        new_name, ok = QInputDialog.getText(self, "Переименовать", "Новое название:", text=current_name)
+        new_name, ok = QInputDialog.getText(self, "Rename Program", "New name:", text=current_name)
         if ok and new_name.strip():
             self.playlists_manager.rename_program(prog_id, new_name.strip())
             self._refresh_programs_list()
@@ -812,7 +828,7 @@ class MainWindow(QMainWindow):
         if not prog_id:
             return
         if len(self.playlists_manager.get_all_programs()) <= 1:
-            QMessageBox.warning(self, "Ошибка", "Нельзя удалить последнюю программу.")
+            QMessageBox.warning(self, "Error", "Cannot delete the last remaining program.")
             return
 
         if self.current_program_id == prog_id:
@@ -821,11 +837,11 @@ class MainWindow(QMainWindow):
         self._refresh_programs_list()
 
     # ================================================================
-    # ОБРАБОТЧИКИ СОБЫТИЙ: МЕДИА
+    # MEDIA EVENT HANDLERS
     # ================================================================
 
     def _get_media_thumbnail(self, file_path: str, ext: str) -> QPixmap | None:
-        """Создаёт миниатюру для медиафайла (картинка, видео или GIF)."""
+        """Generates a thumbnail for a media file (image, video, or GIF)."""
         pixmap = None
         if ext in IMAGE_THUMBNAIL_EXTENSIONS:
             pixmap = QPixmap(file_path)
@@ -842,22 +858,23 @@ class MainWindow(QMainWindow):
                 return None
         else:
             return None
-        
+
         return pixmap.scaled(
             64, 64,
             Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
+            Qt.TransformationMode.SmoothTransformation,
         )
 
     def open_file_dialog(self) -> None:
         all_exts = " ".join(f"*{ext}" for ext in sorted(ALLOWED_EXTENSIONS))
-        files, _ = QFileDialog.getOpenFileNames(self, "Выберите файлы", "", f"Все медиа ({all_exts})")
+        files, _ = QFileDialog.getOpenFileNames(self, "Select Files", "", f"All Media ({all_exts})")
         if files:
             self.add_media_files(files)
 
     def add_media_files(self, file_paths: list[str]) -> None:
         existing_paths = {
-            self.media_list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.media_list.count())
+            self.media_list.item(i).data(Qt.ItemDataRole.UserRole)
+            for i in range(self.media_list.count())
         }
         added_count = 0
         for p in file_paths:
@@ -869,15 +886,14 @@ class MainWindow(QMainWindow):
 
                 if ext in VIDEO_EXTENSIONS:
                     icon_str = "🎬"
-                    type_str = "Видео"
+                    type_str = "Video"
                 else:
                     icon_str = ""
-                    type_str = "Изображение"
+                    type_str = "Image"
 
                 item_text = f"{icon_str}  {path.name}    ({size_str}, {type_str})".strip()
                 item = QListWidgetItem(item_text)
-                
-                # Миниатюра: картинки напрямую, видео/GIF — через FFmpeg
+
                 pixmap = self._get_media_thumbnail(str(path), ext)
                 if pixmap:
                     item.setIcon(QIcon(pixmap))
@@ -885,35 +901,35 @@ class MainWindow(QMainWindow):
                 item.setToolTip(str(path))
                 self.media_list.addItem(item)
 
-                self.log(f"+ Добавлен: {path.name} ({size_str})")
+                self.log(f"+ Added: {path.name} ({size_str})")
                 existing_paths.add(str(path))
                 added_count += 1
-                
+
         if added_count > 0:
             self._save_current_program_files()
 
     def _on_remove_media_item(self, item: QListWidgetItem) -> None:
-        """Удаляет файл из локального списка (двойной клик)."""
+        """Removes an item from local list on double click."""
         row = self.media_list.row(item)
         removed = self.media_list.takeItem(row)
         if removed:
             path = Path(removed.data(Qt.ItemDataRole.UserRole))
-            self.log(f"- Удалён из списка: {path.name}")
+            self.log(f"- Removed from list: {path.name}")
             self._save_current_program_files()
 
     def _on_clear_media_list(self) -> None:
-        """Очищает весь список медиафайлов."""
+        """Clears all items from the media list."""
         self.media_list.clear()
-        self.log("  Список медиа очищен")
+        self.log("  Media list cleared")
         self._save_current_program_files()
 
     def _on_play_media(self) -> None:
         """
-        Запускает двухэтапную загрузку и воспроизведение медиа.
+        Executes two-stage upload and program playback.
 
-        Собирает пути файлов из списка и передаёт UploadMediaWorker,
-        который выполнит: MD5 → checkUpload → uploadMedia → uploadThirdProgram
-        в отдельном потоке.
+        Collects paths from list and forwards to UploadMediaWorker
+        executing: MD5 -> checkUpload -> uploadMedia -> uploadThirdProgram
+        in an asynchronous background thread.
         """
         file_paths = []
         for i in range(self.media_list.count()):
@@ -921,24 +937,21 @@ class MainWindow(QMainWindow):
             file_paths.append(item.data(Qt.ItemDataRole.UserRole))
 
         if not file_paths:
-            self.log("⚠ Добавьте файлы в медиабиблиотеку")
+            self.log("⚠ Add media files to the library first")
             return
 
-        # Блокируем кнопку и показываем прогресс
         self.btn_play_media.setEnabled(False)
-        self.btn_play_media.setText("⏳  Загрузка...")
+        self.btn_play_media.setText("⏳  Uploading...")
         self.upload_progress.setVisible(True)
         self.upload_progress.setValue(0)
         self.btn_cancel_upload.setVisible(True)
         self.btn_cancel_upload.setEnabled(True)
-        self.btn_cancel_upload.setText("Отмена")
+        self.btn_cancel_upload.setText("Cancel")
 
-        # Создаём рабочий поток для загрузки
-        from src.ui.workers import UploadMediaWorker
         worker = UploadMediaWorker(
-            client=self.client, 
+            client=self.client,
             file_paths=file_paths,
-            image_duration_sec=self.spin_image_duration.value()
+            image_duration_sec=self.spin_image_duration.value(),
         )
         worker.progress.connect(self.upload_progress.setValue)
         worker.finished.connect(self._on_media_upload_finished)
@@ -946,60 +959,49 @@ class MainWindow(QMainWindow):
         self._active_workers.append(worker)
         worker.start()
 
-        self.log(f"→ Загрузка {len(file_paths)} файлов на устройство...")
+        self.log(f"→ Uploading {len(file_paths)} files to device...")
 
     def _on_cancel_upload(self) -> None:
-        """Обработчик отмены текущей загрузки."""
+        """Cancels current upload worker."""
         self.btn_cancel_upload.setEnabled(False)
-        self.btn_cancel_upload.setText("Отменяем...")
-        self.log("⚠ Остановка загрузки...")
-        
-        from src.ui.workers import UploadMediaWorker
+        self.btn_cancel_upload.setText("Cancelling...")
+        self.log("⚠ Aborting upload...")
+
         for w in self._active_workers:
             if isinstance(w, UploadMediaWorker):
                 w._is_aborted = True
-                
-        # Принудительно обрываем HTTP-соединение
+
         self.client.abort_all_requests()
 
     def _on_media_upload_finished(self, success: bool, message: str) -> None:
-        """Обработчик завершения загрузки медиа."""
+        """Handles upload completion signal."""
         self.btn_play_media.setEnabled(True)
-        self.btn_play_media.setText("▶  Воспроизвести на LED")
+        self.btn_play_media.setText("▶  Play on LED")
         self.btn_cancel_upload.setVisible(False)
 
         if success:
             self.upload_progress.setValue(100)
             self.log(f"✓ {message}")
-            # Скрываем прогресс через 2 секунды
             QTimer.singleShot(2000, lambda: self.upload_progress.setVisible(False))
         else:
             self.upload_progress.setVisible(False)
             self.log(f"✗ {message}")
 
     # ================================================================
-    # ОБРАБОТЧИКИ СОБЫТИЙ: ЯРКОСТЬ
+    # BRIGHTNESS EVENT HANDLERS
     # ================================================================
 
     def _on_brightness_changed(self, value: int) -> None:
         """
-        Обработчик изменения слайдера яркости.
-
-        Использует debounce-паттерн: при каждом движении слайдера
-        перезапускается таймер. HTTP-запрос отправляется только когда
-        пользователь остановил ползунок (пауза ≥ BRIGHTNESS_DEBOUNCE_MS).
-
-        Это предотвращает спам устройства сотнями запросов при
-        плавном перетаскивании слайдера.
+        Handles brightness slider adjustments.
+        Uses debounce timer to prevent request flooding.
         """
         self._pending_brightness = value
         self.brightness_value_label.setText(f"{value}%")
-
-        # Перезапускаем таймер (каждое движение сбрасывает countdown)
         self._brightness_timer.start()
 
     def _send_brightness(self) -> None:
-        """Отправляет значение яркости на устройство (вызывается по таймеру)."""
+        """Dispatches debounced brightness level to device."""
         value = self._pending_brightness
 
         worker = BrightnessWorker(client=self.client, value=value)
@@ -1009,21 +1011,19 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_brightness_sent(self, success: bool, message: str) -> None:
-        """Обработчик завершения отправки яркости."""
+        """Handles brightness response signal."""
         if success:
             self.log(f"☀ {message}")
         else:
             self.log(f"✗ {message}")
 
     # ================================================================
-    # ОБРАБОТЧИКИ СОБЫТИЙ: УПРАВЛЕНИЕ
+    # DEVICE CONTROL EVENT HANDLERS
     # ================================================================
 
     def _on_toggle_screen(self) -> None:
-        """Переключает состояние экрана (ВКЛ/ВЫКЛ)."""
-        # Инвертируем текущее состояние
+        """Toggles display power state."""
         new_state = not self._screen_on
-
         self.btn_screen_power.setEnabled(False)
 
         worker = ScreenPowerWorker(client=self.client, power_on=new_state)
@@ -1033,7 +1033,7 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_screen_toggled(self, success: bool, message: str, new_state: bool) -> None:
-        """Обработчик завершения переключения экрана."""
+        """Handles screen toggle response signal."""
         self.btn_screen_power.setEnabled(True)
         if success:
             self._screen_on = new_state
@@ -1042,12 +1042,11 @@ class MainWindow(QMainWindow):
             self.log(f"✗ {message}")
 
     def _on_reboot(self) -> None:
-        """Перезагружает устройство (с подтверждением)."""
+        """Reboots device upon user confirmation."""
         reply = QMessageBox.question(
             self,
-            "Подтверждение",
-            "Вы уверены, что хотите перезагрузить медиаплеер?\n"
-            "Воспроизведение контента будет прервано.",
+            "Confirmation",
+            "Are you sure you want to reboot the media player?\nActive playback will be interrupted.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1063,7 +1062,7 @@ class MainWindow(QMainWindow):
         worker.start()
 
     def _on_reboot_finished(self, success: bool, message: str) -> None:
-        """Обработчик завершения перезагрузки."""
+        """Handles reboot response signal."""
         self.btn_reboot.setEnabled(True)
         if success:
             self.log(f"↻ {message}")
@@ -1071,101 +1070,96 @@ class MainWindow(QMainWindow):
             self.log(f"✗ {message}")
 
     def _on_clear_memory(self) -> None:
-        """Показывает предупреждение и запускает процесс удаления всех медиа."""
+        """Prompts and initiates deletion of all player files."""
         reply = QMessageBox.question(
-            self, 
-            "Очистка памяти", 
-            "Вы уверены, что хотите удалить ВСЕ файлы с плеера? Это освободит память, но при следующем воспроизведении файлы загрузятся заново.",
+            self,
+            "Clear Storage",
+            "Are you sure you want to delete ALL files from the player?\nThis frees device memory, but files will be re-uploaded on next playback.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.No,
         )
-        
+
         if reply != QMessageBox.StandardButton.Yes:
             return
-            
+
         self.btn_clear_memory.setEnabled(False)
-        self.btn_clear_memory.setText("⏳  Очистка...")
-        
-        from src.ui.workers import ClearMemoryWorker
+        self.btn_clear_memory.setText("⏳  Clearing...")
+
         worker = ClearMemoryWorker(self.client)
-        worker.progress.connect(lambda p: self.log(f"  Удаление файлов: {p}%"))
+        worker.progress.connect(lambda p: self.log(f"  Deleting files: {p}%"))
         worker.finished.connect(self._on_clear_memory_finished)
         worker.finished.connect(lambda *args: self._cleanup_worker(worker))
         self._active_workers.append(worker)
         worker.start()
-        
-        self.log("Начата очистка памяти плеера...")
+
+        self.log("Started clearing player memory...")
 
     def _on_clear_memory_finished(self, success: bool, message: str) -> None:
-        """Обработчик завершения очистки памяти."""
+        """Handles memory clearing response signal."""
         self.btn_clear_memory.setEnabled(True)
-        self.btn_clear_memory.setText("🗑  Очистить память")
-        
+        self.btn_clear_memory.setText("⌫  Clear Storage")
+
         if success:
             self.log(f"✓ {message}")
-            QMessageBox.information(self, "Успех", message)
+            QMessageBox.information(self, "Success", message)
         else:
             self.log(f"✗ {message}")
-            QMessageBox.critical(self, "Ошибка", message)
+            QMessageBox.critical(self, "Error", message)
 
     def _on_show_device_media(self) -> None:
-        """Показывает менеджер файлов устройства."""
+        """Opens the device media file manager dialog."""
         dialog = DeviceMediaDialog(self, self.client, self.playlists_manager)
         dialog.exec()
 
     # ================================================================
-    # УТИЛИТЫ
+    # UTILITIES
     # ================================================================
 
     def log(self, message: str) -> None:
         """
-        Добавляет сообщение в лог-панель с временной меткой.
+        Appends a timestamped log entry to the UI log panel.
 
         Args:
-            message: Текст сообщения для отображения.
+            message: Informational text string to display.
         """
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_panel.append(f"[{timestamp}]  {message}")
-        # Автоматическая прокрутка вниз
         scrollbar = self.log_panel.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:
-        """Форматирует размер файла в человеко-читаемый вид."""
+        """Formats file size into human-readable representation."""
         if size_bytes < 1024:
-            return f"{size_bytes} Б"
+            return f"{size_bytes} B"
         elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} КБ"
+            return f"{size_bytes / 1024:.1f} KB"
         elif size_bytes < 1024 * 1024 * 1024:
-            return f"{size_bytes / (1024 * 1024):.1f} МБ"
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
         else:
-            return f"{size_bytes / (1024 * 1024 * 1024):.1f} ГБ"
+            return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
     def _cleanup_worker(self, worker) -> None:
-        """Удаляет завершённый воркер из списка активных потоков."""
+        """Removes finished worker thread from active list."""
         try:
             self._active_workers.remove(worker)
         except ValueError:
             pass
 
     # ================================================================
-    # ЖИЗНЕННЫЙ ЦИКЛ
+    # LIFECYCLE
     # ================================================================
 
     def closeEvent(self, event) -> None:
-        """Очистка при закрытии окна."""
-        # Очищаем ресурсы динамического видеоплеера
+        """Gracefully tears down network connections and worker threads upon application exit."""
         if hasattr(self, "tab_dynamic_video"):
             self.tab_dynamic_video.cleanup()
 
-        # Принудительно обрываем все сетевые соединения, 
-        # чтобы потоки, зависшие на HTTP POST, могли завершиться
         self.client.abort_all_requests()
-        
+
         if hasattr(self, "ping_worker"):
             self.ping_worker.stop()
-            
+
         for w in self._active_workers:
             if hasattr(w, "stop"):
                 w.stop()
@@ -1174,8 +1168,7 @@ class MainWindow(QMainWindow):
                 w.wait(1000)
             else:
                 w.wait(1000)
-                
-        # Ожидаем завершения рендера, если он запущен
+
         if hasattr(self, "scene_editor") and hasattr(self.scene_editor, "worker") and self.scene_editor.worker:
             try:
                 if self.scene_editor.worker.isRunning():
@@ -1186,26 +1179,21 @@ class MainWindow(QMainWindow):
         event.accept()
 
     # ================================================================
-    # ИНТЕГРАЦИЯ SCENE EDITOR И FFMPEG
+    # SCENE EDITOR & FFMPEG INTEGRATION
     # ================================================================
-    
+
     def _on_render_completed(self, file_path: str) -> None:
-        """Срабатывает после успешного рендера сложной сцены в SceneEditor."""
-        from datetime import datetime
-        name = f"Сцена {datetime.now().strftime('%H:%M:%S')}"
-        
-        # Создаем плейлист
+        """Fires upon successful completion of scene rendering via SceneEditor."""
+        name = f"Scene {datetime.now().strftime('%H:%M:%S')}"
+
         prog = self.playlists_manager.add_program(name)
         self.playlists_manager.set_program_files(prog["id"], [file_path])
-        
-        self.log(f"✦ Создан новый плейлист '{name}' с готовой сценой")
-        
+
+        self.log(f"✦ Created new playlist '{name}' with assembled scene")
         self._refresh_programs_list()
-        
-        # Находим и выбираем этот плейлист в UI
+
         items = self.list_programs.findItems(name, Qt.MatchFlag.MatchExactly)
         if items:
             self.list_programs.setCurrentItem(items[0])
-            
-        # Запускаем отправку
+
         self._on_play_media()
