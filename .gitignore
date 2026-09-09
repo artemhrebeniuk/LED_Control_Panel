@@ -19,11 +19,11 @@ venv/
 env/
 .env
 
-# Тестовые медиафайлы
+# Media files (excluded from repo, except documentation assets)
 *.mp4
 *.jpg
 *.jpeg
 *.png
 *.gif
-!/docs/
-!/assets/
+!/docs/**
+!/assets/**
